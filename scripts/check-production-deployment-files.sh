@@ -75,7 +75,7 @@ check_workflow() {
 
 check_deploy_script() {
   require_text "${deploy_script}" 'sha256sum --check'
-  require_text "${deploy_script}" 'git作業ツリーです'
+  require_text "${deploy_script}" 'Git作業ツリーです'
   require_text "${deploy_script}" 'アーカイブに不正なパスが含まれています'
   require_text "${deploy_script}" 'mv -Tf'
   require_text "${deploy_script}" 'rollback_release'
