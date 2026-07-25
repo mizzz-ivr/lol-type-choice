@@ -25,8 +25,22 @@ jobs:
       - name: リポジトリを取得
         uses: actions/checkout@v4
 
-      - name: 本番手動デプロイ設定を検証
-        run: bash -x scripts/check-production-deployment-files.sh
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: シェルスクリプト構文を検証
+        run: bash scripts/check-production-deployment-files.sh syntax
+
+      - name: 本番Workflowの安全条件を検証
+        run: bash scripts/check-production-deployment-files.sh workflow
+
+      - name: リモートデプロイスクリプトを検証
+        run: bash scripts/check-production-deployment-files.sh deploy-script
+
+      - name: PM2本番設定を検証
+        run: bash scripts/check-production-deployment-files.sh pm2
 
       - name: リリース切替と自動切り戻しを検証
         run: bash scripts/test-production-release.sh
