@@ -16,8 +16,8 @@ module.exports = {
       max_memory_restart: "512M",
       time: true,
       merge_logs: true,
-      output: "/var/log/lol-type-choice/output.log",
-      error: "/var/log/lol-type-choice/error.log",
+      out_file: "/var/log/lol-type-choice/output.log",
+      error_file: "/var/log/lol-type-choice/error.log",
       env: {
         NODE_ENV: "production",
         HOSTNAME: "127.0.0.1",
