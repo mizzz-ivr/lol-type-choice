@@ -35,8 +35,10 @@ data/
 deploy/
   ecosystem.config.cjs
   nginx.conf.example
+  sakura-vps/nginx.conf.template
 docs/
   deployment-rental-server.md
+  deployment-sakura-vps.md
 lib/
   analytics.ts
   resultQuery.ts
@@ -46,6 +48,8 @@ lib/
   types.ts
   validation.ts
 scripts/
+  bootstrap-sakura-vps.sh
+  check-sakura-vps-files.sh
   prepare-standalone.mjs
   smoke-standalone.mjs
   smoke-test.mjs
@@ -87,6 +91,7 @@ npm run dev
 ## 品質確認
 
 ```bash
+bash scripts/check-sakura-vps-files.sh
 npm run lint
 npm run test
 npm run build
@@ -95,11 +100,26 @@ npm run smoke:standalone
 
 `npm run build` はNext.jsのstandalone成果物を生成し、`public` と `.next/static` を実行ディレクトリへ配置します。
 
-`main` 向けPull Requestと `main` へのpushでは、GitHub ActionsがLint・Test・Build・standalone起動スモークテストを順番に実行します。いずれかが失敗した場合、CIは失敗として終了します。
+`main` 向けPull Requestと `main` へのpushでは、GitHub ActionsがさくらのVPS設定検証・Lint・Test・Build・standalone起動スモークテストを順番に実行します。いずれかが失敗した場合、CIは失敗として終了します。
 
 ## レンタルサーバーへの公開
 
-Node.js 22.xの常駐プロセスとリバースプロキシを利用できるレンタルサーバーを前提としています。
+初回公開先は **さくらのVPS 2GB・東京リージョン・Ubuntu 24.04** を推奨構成としています。
+
+選定理由:
+
+- Node.js常駐プロセス、Nginx、PM2を利用できる
+- 2GB・3vCPU・SSD 100GBで、サーバー上のNext.jsビルドに必要な余裕がある
+- Ubuntu 24.04の標準OSとSSH公開鍵を利用できる
+- 将来必要になった場合にスケールアップできる
+
+共有レンタルサーバーでNode.jsの常駐実行またはリバースプロキシが利用できない場合、この構成のままでは公開できません。
+
+初期構築・契約設定・UFW・Fail2ban・Node.js・PM2・Nginx・DNS・SSL・更新・切り戻しは [さくらのVPS向けデプロイ手順](docs/deployment-sakura-vps.md) を参照してください。
+
+事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
+
+### 基本的な本番ビルド
 
 ```bash
 cp .env.example .env.production
@@ -111,15 +131,11 @@ npm run smoke:standalone
 npm run start
 ```
 
-本番URLに対する公開後確認は以下で実行します。
+本番URLに対する公開後確認:
 
 ```bash
 SMOKE_BASE_URL=https://example.com npm run smoke
 ```
-
-詳細な初回デプロイ、PM2、Nginx、更新、切り戻し、ログ確認は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) を参照してください。
-
-共有レンタルサーバーでNode.jsの常駐実行またはリバースプロキシが利用できない場合、この構成のままでは公開できません。
 
 ## ヘルスチェック
 
