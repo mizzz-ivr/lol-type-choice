@@ -47,6 +47,12 @@ function startTestServer() {
       return;
     }
 
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: "http://127.0.0.1/private" });
+      response.end();
+      return;
+    }
+
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     response.end("not found");
   });
@@ -90,6 +96,14 @@ function testUrlValidation() {
   );
   assert.throws(
     () => validateProductionSiteUrl("https://192.168.1.10"),
+    /プライベートまたはループバックIP/
+  );
+  assert.throws(
+    () => validateProductionSiteUrl("https://[::1]"),
+    /プライベートまたはループバックIP/
+  );
+  assert.throws(
+    () => validateProductionSiteUrl("https://[::ffff:127.0.0.1]"),
     /プライベートまたはループバックIP/
   );
   assert.throws(
@@ -152,11 +166,25 @@ async function run() {
     });
     assert.equal(timeoutReport.ok, false);
     assert.match(timeoutReport.checks[0].error, /タイムアウト/);
+
+    const redirectReport = await runProductionHealthCheck({
+      ...commonOptions,
+      targets: [
+        {
+          name: "リダイレクト確認",
+          path: "/redirect",
+          validate: async () => null
+        }
+      ]
+    });
+    assert.equal(redirectReport.ok, false);
+    assert.equal(redirectReport.checks[0].status, 302);
+    assert.match(redirectReport.checks[0].error, /HTTP 302/);
   } finally {
     await testServer.close();
   }
 
-  console.log("本番外形監視の正常・異常・タイムアウトテストに成功しました。");
+  console.log("本番外形監視の正常・異常・タイムアウト・リダイレクトテストに成功しました。");
 }
 
 await run();
