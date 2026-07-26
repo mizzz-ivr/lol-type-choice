@@ -72,6 +72,10 @@ function isPrivateIpv4(hostname) {
 
 function isPrivateIpv6(hostname) {
   const normalized = hostname.toLowerCase();
+  if (normalized.startsWith("::ffff:")) {
+    return isPrivateIpv4(normalized.slice("::ffff:".length));
+  }
+
   return (
     normalized === "::" ||
     normalized === "::1" ||
@@ -108,7 +112,7 @@ export function validateProductionSiteUrl(value, options = {}) {
     throw new Error("PRODUCTION_SITE_URLにはパス・クエリ・ハッシュを含めないでください。");
   }
 
-  const hostname = url.hostname.toLowerCase();
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (!allowPrivateForTesting) {
     if (hostname === "localhost" || hostname.endsWith(".localhost")) {
       throw new Error("localhostは本番監視先に指定できません。");
@@ -158,7 +162,7 @@ async function checkTarget(baseUrl, target, options) {
     try {
       const response = await fetchImplementation(targetUrl, {
         method: "GET",
-        redirect: "follow",
+        redirect: "manual",
         headers: {
           accept: "text/html,application/json,application/xml,text/plain;q=0.9,*/*;q=0.8",
           "user-agent": "lol-type-choice-production-monitor/1.0"
@@ -317,6 +321,7 @@ async function main() {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+const entryPointUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+if (entryPointUrl && import.meta.url === entryPointUrl) {
   await main();
 }
