@@ -73,7 +73,7 @@ function isPrivateIpv4(hostname) {
 function isPrivateIpv6(hostname) {
   const normalized = hostname.toLowerCase();
   if (normalized.startsWith("::ffff:")) {
-    return isPrivateIpv4(normalized.slice("::ffff:".length));
+    return true;
   }
 
   return (
