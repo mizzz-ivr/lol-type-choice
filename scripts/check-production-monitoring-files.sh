@@ -31,6 +31,7 @@ for file in "${workflow_file}" "${monitor_script}" "${test_script}"; do
   [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
 done
 
+bash -n "$0"
 node --check "${monitor_script}"
 node --check "${test_script}"
 
@@ -47,14 +48,15 @@ require_text "${workflow_file}" 'continue-on-error: true'
 require_text "${workflow_file}" 'gh issue create'
 require_text "${workflow_file}" 'gh issue comment'
 require_text "${workflow_file}" 'gh issue close'
-require_text "${workflow_file}" 'steps.health.outcome == '\''failure'\'''
-require_text "${workflow_file}" 'steps.health.outcome == '\''success'\'''
+require_text "${workflow_file}" "steps.health.outcome == 'failure'"
+require_text "${workflow_file}" "steps.health.outcome == 'success'"
 
 require_absent_text "${workflow_file}" 'secrets.'
 require_absent_text "${workflow_file}" 'ssh '
 require_absent_text "${workflow_file}" 'scp '
 require_absent_text "${workflow_file}" 'deploy-production-release.sh'
 require_absent_text "${workflow_file}" 'permissions: write-all'
+require_absent_text "${workflow_file}" 'cron: "0 '
 
 require_text "${monitor_script}" 'https:'
 require_text "${monitor_script}" 'localhostは本番監視先に指定できません'
@@ -64,9 +66,5 @@ require_text "${monitor_script}" '"/robots.txt"'
 require_text "${monitor_script}" '"/sitemap.xml"'
 require_text "${monitor_script}" 'AbortController'
 require_text "${monitor_script}" 'HEALTH_REPORT_PATH'
-
-if grep -Eq 'cron:[[:space:]]*["'"']?0[[:space:]]' "${workflow_file}"; then
-  fail "毎時0分開始はGitHub Actionsの混雑を避けるため使用しないでください。"
-fi
 
 echo "本番外形監視設定の静的検証に成功しました。"
