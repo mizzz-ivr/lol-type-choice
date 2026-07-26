@@ -35,8 +35,11 @@ data/
 deploy/
   ecosystem.config.cjs
   nginx.conf.example
-  sakura-vps/nginx.conf.template
+  sakura-vps/
+    ecosystem.production.cjs
+    nginx.conf.template
 docs/
+  deployment-github-actions.md
   deployment-rental-server.md
   deployment-sakura-vps.md
 lib/
@@ -49,10 +52,13 @@ lib/
   validation.ts
 scripts/
   bootstrap-sakura-vps.sh
+  check-production-deployment-files.sh
   check-sakura-vps-files.sh
+  deploy-production-release.sh
   prepare-standalone.mjs
   smoke-standalone.mjs
   smoke-test.mjs
+  test-production-release.sh
 tests/
   health.test.ts
   scoring.test.ts
@@ -92,6 +98,8 @@ npm run dev
 
 ```bash
 bash scripts/check-sakura-vps-files.sh
+bash scripts/check-production-deployment-files.sh
+bash scripts/test-production-release.sh
 npm run lint
 npm run test
 npm run build
@@ -100,7 +108,12 @@ npm run smoke:standalone
 
 `npm run build` はNext.jsのstandalone成果物を生成し、`public` と `.next/static` を実行ディレクトリへ配置します。
 
-`main` 向けPull Requestと `main` へのpushでは、GitHub ActionsがさくらのVPS設定検証・Lint・Test・Build・standalone起動スモークテストを順番に実行します。いずれかが失敗した場合、CIは失敗として終了します。
+`main` 向けPull Requestと `main` へのpushでは、以下をGitHub Actionsで分けて確認します。
+
+- `CI`: さくらのVPS設定・Lint・Test・Build・standalone起動スモークテスト
+- `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
+
+いずれかが失敗した場合、対象の品質ゲートは失敗として終了します。
 
 ## レンタルサーバーへの公開
 
@@ -115,7 +128,9 @@ npm run smoke:standalone
 
 共有レンタルサーバーでNode.jsの常駐実行またはリバースプロキシが利用できない場合、この構成のままでは公開できません。
 
-初期構築・契約設定・UFW・Fail2ban・Node.js・PM2・Nginx・DNS・SSL・更新・切り戻しは [さくらのVPS向けデプロイ手順](docs/deployment-sakura-vps.md) を参照してください。
+初期構築・契約設定・UFW・Fail2ban・Node.js・PM2・Nginx・DNS・SSLは [さくらのVPS向けデプロイ手順](docs/deployment-sakura-vps.md) を参照してください。
+
+初期構築後の更新は、push時の自動公開ではなく、`production` Environmentを利用した [GitHub Actions本番手動デプロイ手順](docs/deployment-github-actions.md) を推奨します。
 
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
@@ -136,6 +151,18 @@ npm run start
 ```bash
 SMOKE_BASE_URL=https://example.com npm run smoke
 ```
+
+### GitHub Actions本番手動デプロイ
+
+`.github/workflows/deploy-production.yml` は、以下を満たす場合だけ実行します。
+
+- Actions画面から手動実行
+- mainブランチから実行
+- mainに含まれる40桁のコミットSHAを指定
+- 確認文字列として`DEPLOY`を入力
+- `production` Environmentの接続設定・Secretが登録済み
+
+デプロイ先では`releases/<SHA>`へ配置し、`current`シンボリックリンクを切り替えます。PM2再読込または内部ヘルスチェックに失敗した場合、直前リリースへ自動で戻します。
 
 ## ヘルスチェック
 

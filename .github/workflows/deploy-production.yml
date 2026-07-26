@@ -1,0 +1,300 @@
+name: 本番手動デプロイ
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: mainに含まれる40桁のコミットSHA
+        required: true
+        type: string
+      confirmation:
+        description: 実行確認としてDEPLOYと入力
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 品質確認とリリース成果物作成
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEPLOY_SHA: ${{ inputs.commit_sha }}
+      DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+
+    steps:
+      - name: 実行条件を検証
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] \
+            || { echo "mainブランチから実行してください。" >&2; exit 1; }
+          [[ "${DEPLOY_CONFIRMATION}" == "DEPLOY" ]] \
+            || { echo "confirmationにはDEPLOYを入力してください。" >&2; exit 1; }
+          [[ "${DEPLOY_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "commit_shaは40桁の小文字16進数で指定してください。" >&2; exit 1; }
+          [[ -n "${NEXT_PUBLIC_SITE_URL}" ]] \
+            || { echo "Repository Variable PRODUCTION_SITE_URLを設定してください。" >&2; exit 1; }
+
+      - name: デプロイ対象を取得
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: mainに含まれるコミットか検証
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${DEPLOY_SHA}" ]] \
+            || { echo "checkout結果が指定SHAと一致しません。" >&2; exit 1; }
+
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${DEPLOY_SHA}" origin/main \
+            || { echo "指定SHAはmainに含まれていません。" >&2; exit 1; }
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 本番URLを検証
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          const value = process.env.NEXT_PUBLIC_SITE_URL;
+          const url = new URL(value);
+
+          if (url.protocol !== "https:") {
+            throw new Error("PRODUCTION_SITE_URLはhttps URLにしてください。");
+          }
+          if (url.pathname !== "/" || url.search || url.hash) {
+            throw new Error("PRODUCTION_SITE_URLにはパス・クエリ・ハッシュを含めないでください。");
+          }
+          NODE
+
+      - name: 依存関係をインストール
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Standaloneスモークテスト
+        run: npm run smoke:standalone
+
+      - name: リリース成果物を作成
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          release_name="release-${DEPLOY_SHA}.tar.gz"
+          mkdir -p \
+            ".next/standalone/deploy/sakura-vps" \
+            "dist"
+          cp deploy/sakura-vps/ecosystem.production.cjs \
+            .next/standalone/deploy/sakura-vps/ecosystem.production.cjs
+          tar -C .next/standalone -czf "dist/${release_name}" .
+          (
+            cd dist
+            sha256sum "${release_name}" >"${release_name}.sha256"
+          )
+          cp scripts/deploy-production-release.sh dist/deploy-production-release.sh
+
+      - name: リリース成果物を保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-${{ inputs.commit_sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: productionへデプロイ
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_SITE_URL }}
+    env:
+      DEPLOY_SHA: ${{ inputs.commit_sha }}
+      PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+      PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_APP_ROOT: ${{ vars.PRODUCTION_APP_ROOT }}
+      PRODUCTION_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: リリース成果物を取得
+        uses: actions/download-artifact@v4
+        with:
+          name: production-release-${{ inputs.commit_sha }}
+          path: dist
+
+      - name: 本番接続設定を検証
+        id: settings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          app_root="${PRODUCTION_APP_ROOT:-/var/www/lol-type-choice}"
+
+          [[ "${PRODUCTION_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] \
+            || { echo "PRODUCTION_HOSTの形式が不正です。" >&2; exit 1; }
+          [[ "${PRODUCTION_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] \
+            || { echo "PRODUCTION_USERの形式が不正です。" >&2; exit 1; }
+          [[ "${ssh_port}" =~ ^[0-9]+$ ]] \
+            || { echo "PRODUCTION_SSH_PORTの形式が不正です。" >&2; exit 1; }
+          (( ssh_port >= 1 && ssh_port <= 65535 )) \
+            || { echo "PRODUCTION_SSH_PORTが範囲外です。" >&2; exit 1; }
+          [[ "${app_root}" =~ ^/[A-Za-z0-9._/-]+$ ]] \
+            || { echo "PRODUCTION_APP_ROOTの形式が不正です。" >&2; exit 1; }
+          [[ "${app_root}" != *"/../"* && "${app_root}" != */.. && "${app_root}" != *"//"* ]] \
+            || { echo "PRODUCTION_APP_ROOTの形式が不正です。" >&2; exit 1; }
+          [[ "${PRODUCTION_SITE_URL}" == https://* ]] \
+            || { echo "PRODUCTION_SITE_URLを設定してください。" >&2; exit 1; }
+          [[ -n "${PRODUCTION_SSH_PRIVATE_KEY}" ]] \
+            || { echo "PRODUCTION_SSH_PRIVATE_KEYを設定してください。" >&2; exit 1; }
+          [[ -n "${PRODUCTION_SSH_KNOWN_HOSTS}" ]] \
+            || { echo "PRODUCTION_SSH_KNOWN_HOSTSを設定してください。" >&2; exit 1; }
+
+          echo "ssh_port=${ssh_port}" >>"${GITHUB_OUTPUT}"
+          echo "app_root=${app_root}" >>"${GITHUB_OUTPUT}"
+
+      - name: SSH鍵とknown_hostsを設定
+        shell: bash
+        env:
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
+        run: |
+          set -Eeuo pipefail
+
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${PRODUCTION_SSH_PRIVATE_KEY}" >"${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${PRODUCTION_SSH_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
+          ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" >/dev/null
+          if [[ "${SSH_PORT}" == "22" ]]; then
+            lookup_host="${PRODUCTION_HOST}"
+          else
+            lookup_host="[${PRODUCTION_HOST}]:${SSH_PORT}"
+          fi
+          ssh-keygen -F "${lookup_host}" -f "${HOME}/.ssh/known_hosts" >/dev/null \
+            || { echo "known_hostsに接続先ホスト鍵がありません。" >&2; exit 1; }
+
+      - name: リモート一時ディレクトリを準備
+        id: remote
+        shell: bash
+        env:
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
+        run: |
+          set -Eeuo pipefail
+
+          remote_directory="/tmp/lol-type-choice-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          target="${PRODUCTION_USER}@${PRODUCTION_HOST}"
+          ssh \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${target}" \
+            "umask 077; mkdir -p '${remote_directory}'"
+          echo "directory=${remote_directory}" >>"${GITHUB_OUTPUT}"
+
+      - name: 成果物を転送してデプロイ
+        shell: bash
+        env:
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
+          APP_ROOT: ${{ steps.settings.outputs.app_root }}
+          REMOTE_DIRECTORY: ${{ steps.remote.outputs.directory }}
+        run: |
+          set -Eeuo pipefail
+
+          release_name="release-${DEPLOY_SHA}.tar.gz"
+          target="${PRODUCTION_USER}@${PRODUCTION_HOST}"
+          ssh_options=(
+            -p "${SSH_PORT}"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts"
+          )
+
+          scp \
+            -P "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "dist/${release_name}" \
+            "dist/${release_name}.sha256" \
+            "dist/deploy-production-release.sh" \
+            "${target}:${REMOTE_DIRECTORY}/"
+
+          ssh "${ssh_options[@]}" "${target}" \
+            "chmod 700 '${REMOTE_DIRECTORY}/deploy-production-release.sh' && APP_ROOT='${APP_ROOT}' RELEASES_TO_KEEP='5' '${REMOTE_DIRECTORY}/deploy-production-release.sh' '${REMOTE_DIRECTORY}/${release_name}' '${REMOTE_DIRECTORY}/${release_name}.sha256' '${DEPLOY_SHA}'"
+
+      - name: 公開URLを確認
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --max-time 10 \
+            "${PRODUCTION_SITE_URL}/api/health" \
+            | grep -F '"status":"ok"'
+
+      - name: リモート一時ファイルを削除
+        if: always() && steps.remote.outcome == 'success'
+        shell: bash
+        env:
+          SSH_PORT: ${{ steps.settings.outputs.ssh_port }}
+          REMOTE_DIRECTORY: ${{ steps.remote.outputs.directory }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${REMOTE_DIRECTORY}" ]] || exit 0
+          target="${PRODUCTION_USER}@${PRODUCTION_HOST}"
+          ssh \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${target}" \
+            "rm -rf -- '${REMOTE_DIRECTORY}'" \
+            || true
+
+      - name: デプロイ結果を記録
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### 本番デプロイ完了"
+            echo
+            echo "- Commit: \`${DEPLOY_SHA}\`"
+            echo "- URL: ${PRODUCTION_SITE_URL}"
+            echo "- Environment: \`production\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
