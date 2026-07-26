@@ -42,6 +42,7 @@ docs/
   deployment-github-actions.md
   deployment-rental-server.md
   deployment-sakura-vps.md
+  production-monitoring.md
 lib/
   analytics.ts
   resultQuery.ts
@@ -53,11 +54,14 @@ lib/
 scripts/
   bootstrap-sakura-vps.sh
   check-production-deployment-files.sh
+  check-production-monitoring-files.sh
   check-sakura-vps-files.sh
   deploy-production-release.sh
   prepare-standalone.mjs
+  production-health-check.mjs
   smoke-standalone.mjs
   smoke-test.mjs
+  test-production-health-check.mjs
   test-production-release.sh
 tests/
   health.test.ts
@@ -100,6 +104,8 @@ npm run dev
 bash scripts/check-sakura-vps-files.sh
 bash scripts/check-production-deployment-files.sh
 bash scripts/test-production-release.sh
+bash scripts/check-production-monitoring-files.sh
+node scripts/test-production-health-check.mjs
 npm run lint
 npm run test
 npm run build
@@ -112,6 +118,7 @@ npm run smoke:standalone
 
 - `CI`: さくらのVPS設定・Lint・Test・Build・standalone起動スモークテスト
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
+- `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 
 いずれかが失敗した場合、対象の品質ゲートは失敗として終了します。
 
@@ -131,6 +138,8 @@ npm run smoke:standalone
 初期構築・契約設定・UFW・Fail2ban・Node.js・PM2・Nginx・DNS・SSLは [さくらのVPS向けデプロイ手順](docs/deployment-sakura-vps.md) を参照してください。
 
 初期構築後の更新は、push時の自動公開ではなく、`production` Environmentを利用した [GitHub Actions本番手動デプロイ手順](docs/deployment-github-actions.md) を推奨します。
+
+公開後の外形監視・障害Issue・復旧確認は [本番サイトの外形監視](docs/production-monitoring.md) を参照してください。
 
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
@@ -163,6 +172,25 @@ SMOKE_BASE_URL=https://example.com npm run smoke
 - `production` Environmentの接続設定・Secretが登録済み
 
 デプロイ先では`releases/<SHA>`へ配置し、`current`シンボリックリンクを切り替えます。PM2再読込または内部ヘルスチェックに失敗した場合、直前リリースへ自動で戻します。
+
+### 本番外形監視
+
+`.github/workflows/production-monitoring.yml` は、Repository Variable `PRODUCTION_SITE_URL` が設定されている場合に、15分間隔で以下を確認します。
+
+- `/`
+- `/api/health`
+- `/robots.txt`
+- `/sitemap.xml`
+
+異常時は固定タイトルの障害Issueを作成または更新し、復旧時は監視結果を記録してクローズします。監視からSSH Secret、VPS、デプロイWorkflowへはアクセスしません。
+
+ローカルから同じ監視を実行できます。
+
+```bash
+PRODUCTION_SITE_URL=https://example.com \
+HEALTH_REPORT_PATH=production-health-report.json \
+node scripts/production-health-check.mjs
+```
 
 ## ヘルスチェック
 
