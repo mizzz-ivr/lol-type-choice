@@ -20,6 +20,37 @@ const checks = [
   { path: "/sitemap.xml", label: "sitemap.xml", includes: "/diagnosis" }
 ];
 
+const expectedSecurityHeaders = [
+  ["content-security-policy", "base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'"],
+  ["x-frame-options", "DENY"],
+  ["x-content-type-options", "nosniff"],
+  ["referrer-policy", "strict-origin-when-cross-origin"],
+  ["strict-transport-security", "max-age=31536000"],
+  ["x-permitted-cross-domain-policies", "none"]
+];
+
+const assertSecurityHeaders = (response, label) => {
+  for (const [name, expectedValue] of expectedSecurityHeaders) {
+    const actualValue = response.headers.get(name);
+    if (actualValue !== expectedValue) {
+      throw new Error(
+        `${label}の${name}が期待値と一致しません。expected=${expectedValue}, actual=${actualValue ?? "<missing>"}`
+      );
+    }
+  }
+
+  const permissionsPolicy = response.headers.get("permissions-policy") ?? "";
+  for (const directive of ["camera=()", "microphone=()", "geolocation=()", "payment=()", "usb=()"] ) {
+    if (!permissionsPolicy.includes(directive)) {
+      throw new Error(`${label}のPermissions-Policyに${directive}がありません。`);
+    }
+  }
+
+  if (response.headers.has("x-powered-by")) {
+    throw new Error(`${label}でX-Powered-Byが公開されています。`);
+  }
+};
+
 const run = async () => {
   const baseUrl = normalizeBaseUrl(process.env.SMOKE_BASE_URL);
 
@@ -39,6 +70,7 @@ const run = async () => {
       throw new Error(`${check.label}の応答に期待する内容がありません: ${check.includes}`);
     }
 
+    assertSecurityHeaders(response, check.label);
     console.log(`OK ${check.label}: ${targetUrl}`);
   }
 };
