@@ -1,0 +1,160 @@
+name: Production Monitoring
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-health-monitoring
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    name: 本番サイト外形監視
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PRODUCTION_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+      HEALTH_REPORT_PATH: production-health-report.json
+      INCIDENT_TITLE: "[監視] 本番サイトの外形監視で異常を検知"
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: 監視設定を確認
+        id: settings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${PRODUCTION_SITE_URL}" ]]; then
+            echo "configured=false" >>"${GITHUB_OUTPUT}"
+            {
+              echo "### 本番外形監視をスキップ"
+              echo
+              echo "Repository Variable \`PRODUCTION_SITE_URL\` が未設定です。"
+            } >>"${GITHUB_STEP_SUMMARY}"
+          else
+            echo "configured=true" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - name: 本番サイトを確認
+        id: health
+        if: steps.settings.outputs.configured == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/production-health-check.mjs 2>&1 \
+            | tee production-health-output.log
+
+      - name: 監視結果をサマリーへ追加
+        if: steps.settings.outputs.configured == 'true' && hashFiles('production-health-report.json') != ''
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE' >>"${GITHUB_STEP_SUMMARY}"
+          import { readFile } from "node:fs/promises";
+          import { formatHealthReportMarkdown } from "./scripts/production-health-check.mjs";
+
+          const report = JSON.parse(await readFile(process.env.HEALTH_REPORT_PATH, "utf8"));
+          process.stdout.write(formatHealthReportMarkdown(report));
+          NODE
+
+      - name: 障害Issueを作成または更新
+        if: steps.settings.outputs.configured == 'true' && steps.health.outcome == 'failure'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          node --input-type=module <<'NODE' >incident.md
+          import { existsSync } from "node:fs";
+          import { readFile } from "node:fs/promises";
+          import { formatHealthReportMarkdown } from "./scripts/production-health-check.mjs";
+
+          let body = "## 本番外形監視で異常を検知\n\n";
+          if (existsSync(process.env.HEALTH_REPORT_PATH)) {
+            const report = JSON.parse(await readFile(process.env.HEALTH_REPORT_PATH, "utf8"));
+            body += formatHealthReportMarkdown(report, "監視結果");
+          } else {
+            body += "監視設定または監視処理の実行に失敗し、JSONレポートを生成できませんでした。\n";
+          }
+
+          body += `\n- GitHub Actions: ${process.env.RUN_URL}\n`;
+          body += "- 自動復旧操作: 実施していません\n";
+          body += "- 確認事項: VPS、Nginx、PM2、DNS、SSL、直近デプロイを順に確認してください。\n";
+          process.stdout.write(body);
+          NODE
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" --body-file incident.md
+            echo "既存の障害Issue #${issue_number}へ監視結果を追記しました。" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            issue_url="$(gh issue create --title "${INCIDENT_TITLE}" --body-file incident.md)"
+            echo "障害Issueを作成しました: ${issue_url}" >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: 復旧Issueをクローズ
+        if: steps.settings.outputs.configured == 'true' && steps.health.outcome == 'success'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -z "${issue_number}" ]]; then
+            echo "クローズ対象の障害Issueはありません。" >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          node --input-type=module <<'NODE' >recovery.md
+          import { readFile } from "node:fs/promises";
+          import { formatHealthReportMarkdown } from "./scripts/production-health-check.mjs";
+
+          const report = JSON.parse(await readFile(process.env.HEALTH_REPORT_PATH, "utf8"));
+          let body = "## 本番サイトの復旧を確認\n\n";
+          body += formatHealthReportMarkdown(report, "復旧確認結果");
+          body += `\n- GitHub Actions: ${process.env.RUN_URL}\n`;
+          process.stdout.write(body);
+          NODE
+
+          gh issue comment "${issue_number}" --body-file recovery.md
+          gh issue close "${issue_number}" --reason completed
+          echo "障害Issue #${issue_number}を復旧済みとしてクローズしました。" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 異常時はWorkflowを失敗として終了
+        if: steps.settings.outputs.configured == 'true' && steps.health.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "本番外形監視で異常を検知しました。" >&2
+          exit 1
