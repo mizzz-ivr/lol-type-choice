@@ -49,6 +49,7 @@ require_text "${workflow_file}" 'PRODUCTION_SSH_PRIVATE_KEY'
 require_text "${workflow_file}" 'PRODUCTION_SSH_KNOWN_HOSTS'
 require_text "${workflow_file}" 'ssh-keygen -y'
 require_text "${workflow_file}" 'ssh-keygen -F'
+require_text "${workflow_file}" 'trap cleanup EXIT'
 require_text "${workflow_file}" '[監視] 本番サイトの外形監視で異常を検知'
 require_text "${workflow_file}" 'node scripts/smoke-test.mjs'
 require_text "${workflow_file}" 'actions/upload-artifact@v4'
@@ -76,6 +77,31 @@ quality_section="$(awk '
 if grep -Fq 'secrets.' <<<"${quality_section}"; then
   fail "qualityジョブから本番Secretを参照しないでください。"
 fi
+
+readiness_header="$(awk '
+  /^  readiness:$/ { in_readiness = 1 }
+  in_readiness && /^    steps:$/ { exit }
+  in_readiness { print }
+' "${workflow_file}")"
+
+if grep -Fq 'secrets.' <<<"${readiness_header}"; then
+  fail "readinessジョブ全体へ本番Secretを設定しないでください。"
+fi
+
+ssh_step_section="$(awk '
+  /^      - name: 本番SSH設定を値を出力せず検証$/ { in_ssh_step = 1; print; next }
+  in_ssh_step && /^      - name:/ { exit }
+  in_ssh_step { print }
+' "${workflow_file}")"
+
+for secret_name in PRODUCTION_SSH_PRIVATE_KEY PRODUCTION_SSH_KNOWN_HOSTS; do
+  grep -Fq "secrets.${secret_name}" <<<"${ssh_step_section}" \
+    || fail "${secret_name}はSSH設定検証ステップだけで参照してください。"
+done
+
+secret_reference_count="$(grep -c 'secrets\.' "${workflow_file}")"
+[[ "${secret_reference_count}" == "2" ]] \
+  || fail "本番Secret参照はSSH設定検証ステップの2件だけにしてください。"
 
 require_text "${logic_file}" 'status = checks.every'
 require_text "${logic_file}" '"GO" : "NO-GO"'
