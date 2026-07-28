@@ -45,6 +45,7 @@ docs/
   deployment-rental-server.md
   deployment-sakura-vps.md
   production-monitoring.md
+  release-readiness.md
   security-headers.md
 lib/
   analytics.ts
@@ -58,14 +59,17 @@ scripts/
   bootstrap-sakura-vps.sh
   check-production-deployment-files.sh
   check-production-monitoring-files.sh
+  check-release-readiness-files.sh
   check-sakura-vps-files.sh
   deploy-production-release.sh
   prepare-standalone.mjs
   production-health-check.mjs
+  release-readiness.mjs
   smoke-standalone.mjs
   smoke-test.mjs
   test-production-health-check.mjs
   test-production-release.sh
+  test-release-readiness.mjs
 tests/
   health.test.ts
   scoring.test.ts
@@ -110,6 +114,8 @@ bash scripts/check-production-deployment-files.sh
 bash scripts/test-production-release.sh
 bash scripts/check-production-monitoring-files.sh
 node scripts/test-production-health-check.mjs
+bash scripts/check-release-readiness-files.sh
+node scripts/test-release-readiness.mjs
 npm run lint
 npm run test
 npm run build
@@ -123,6 +129,7 @@ npm run smoke:standalone
 - `CI`: さくらのVPS設定・セキュリティヘッダー・Lint・Test・Build・standalone起動スモークテスト
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
+- `Release Readiness Checks`: リリース判定Workflowの最小権限・GO／NO-GO判定・Secret非出力
 
 いずれかが失敗した場合、対象の品質ゲートは失敗として終了します。
 
@@ -142,6 +149,8 @@ npm run smoke:standalone
 初期構築・契約設定・UFW・Fail2ban・Node.js・PM2・Nginx・DNS・SSLは [さくらのVPS向けデプロイ手順](docs/deployment-sakura-vps.md) を参照してください。
 
 初期構築後の更新は、push時の自動公開ではなく、`production` Environmentを利用した [GitHub Actions本番手動デプロイ手順](docs/deployment-github-actions.md) を推奨します。
+
+公開前後のGO／NO-GO判定は [リリース可否判定](docs/release-readiness.md) を参照してください。
 
 公開後の外形監視・障害Issue・復旧確認は [本番サイトの外形監視](docs/production-monitoring.md) を参照してください。
 
@@ -168,6 +177,21 @@ SMOKE_BASE_URL=https://example.com npm run smoke
 ```
 
 スモークテストでは主要ページの内容に加え、共通セキュリティヘッダーと`X-Powered-By`非公開も確認します。
+
+### リリース可否判定
+
+`.github/workflows/release-readiness.yml` は、GitHub Actions画面から手動で実行します。
+
+- `pre_deploy`: 本番デプロイ前のコード品質・Environment設定・SSH鍵・known_hosts・監視障害を確認
+- `post_deploy`: `pre_deploy`の確認に加え、本番URLへスモークテストを実行
+
+実行には次を入力します。
+
+- mainに含まれる40桁のコミットSHA
+- `pre_deploy`または`post_deploy`
+- 確認文字列`CHECK`
+
+判定結果は`GO`または`NO-GO`としてGitHub Actions SummaryとJSON／Markdown Artifactへ保存されます。このWorkflowはSSH接続、SCP、本番デプロイ、Issue更新を行いません。
 
 ### GitHub Actions本番手動デプロイ
 
