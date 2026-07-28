@@ -110,10 +110,7 @@ jobs:
       PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
       PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
       PRODUCTION_APP_ROOT: ${{ vars.PRODUCTION_APP_ROOT }}
-      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
-      PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
       INCIDENT_TITLE: "[監視] 本番サイトの外形監視で異常を検知"
-      GH_TOKEN: ${{ github.token }}
       RELEASE_REPORT_PATH: release-readiness-report.json
       RELEASE_MARKDOWN_PATH: release-readiness-report.md
 
@@ -131,6 +128,8 @@ jobs:
 
       - name: 未解決の監視障害Issueを確認
         id: incidents
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -157,6 +156,9 @@ jobs:
 
       - name: 本番SSH設定を値を出力せず検証
         id: ssh_settings
+        env:
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -166,22 +168,29 @@ jobs:
           known_hosts_configured=false
           known_hosts_match=false
           ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          private_key_path="${HOME}/.ssh/readiness_key"
+          known_hosts_path="${HOME}/.ssh/readiness_known_hosts"
+
+          cleanup() {
+            rm -f "${private_key_path}" "${known_hosts_path}"
+          }
+          trap cleanup EXIT
 
           install -d -m 0700 "${HOME}/.ssh"
 
           if [[ -n "${PRODUCTION_SSH_PRIVATE_KEY}" ]]; then
             private_key_configured=true
-            printf '%s\n' "${PRODUCTION_SSH_PRIVATE_KEY}" >"${HOME}/.ssh/readiness_key"
-            chmod 0600 "${HOME}/.ssh/readiness_key"
-            if ssh-keygen -y -f "${HOME}/.ssh/readiness_key" >/dev/null 2>&1; then
+            printf '%s\n' "${PRODUCTION_SSH_PRIVATE_KEY}" >"${private_key_path}"
+            chmod 0600 "${private_key_path}"
+            if ssh-keygen -y -f "${private_key_path}" >/dev/null 2>&1; then
               private_key_valid=true
             fi
           fi
 
           if [[ -n "${PRODUCTION_SSH_KNOWN_HOSTS}" ]]; then
             known_hosts_configured=true
-            printf '%s\n' "${PRODUCTION_SSH_KNOWN_HOSTS}" >"${HOME}/.ssh/readiness_known_hosts"
-            chmod 0600 "${HOME}/.ssh/readiness_known_hosts"
+            printf '%s\n' "${PRODUCTION_SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+            chmod 0600 "${known_hosts_path}"
 
             if [[ "${ssh_port}" =~ ^[0-9]+$ && -n "${PRODUCTION_HOST}" ]]; then
               if [[ "${ssh_port}" == "22" ]]; then
@@ -190,13 +199,11 @@ jobs:
                 lookup_host="[${PRODUCTION_HOST}]:${ssh_port}"
               fi
 
-              if ssh-keygen -F "${lookup_host}" -f "${HOME}/.ssh/readiness_known_hosts" >/dev/null 2>&1; then
+              if ssh-keygen -F "${lookup_host}" -f "${known_hosts_path}" >/dev/null 2>&1; then
                 known_hosts_match=true
               fi
             fi
           fi
-
-          rm -f "${HOME}/.ssh/readiness_key" "${HOME}/.ssh/readiness_known_hosts"
 
           echo "private_key_configured=${private_key_configured}" >>"${GITHUB_OUTPUT}"
           echo "private_key_valid=${private_key_valid}" >>"${GITHUB_OUTPUT}"
