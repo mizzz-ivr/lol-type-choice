@@ -222,6 +222,8 @@ jobs:
         id: report
         continue-on-error: true
         env:
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT || '__missing__' }}
+          PRODUCTION_APP_ROOT: ${{ vars.PRODUCTION_APP_ROOT || '__missing__' }}
           QUALITY_CHECKS_PASSED: "true"
           PRIVATE_KEY_CONFIGURED: ${{ steps.ssh_settings.outputs.private_key_configured }}
           PRIVATE_KEY_VALID: ${{ steps.ssh_settings.outputs.private_key_valid }}
