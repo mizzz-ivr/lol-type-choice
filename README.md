@@ -28,6 +28,8 @@ components/
   ProgressBar.tsx
   QuestionCard.tsx
   ResultActions.tsx
+config/
+  securityHeaders.ts
 data/
   champions.ts
   questions.ts
@@ -43,6 +45,7 @@ docs/
   deployment-rental-server.md
   deployment-sakura-vps.md
   production-monitoring.md
+  security-headers.md
 lib/
   analytics.ts
   resultQuery.ts
@@ -66,6 +69,7 @@ scripts/
 tests/
   health.test.ts
   scoring.test.ts
+  securityHeaders.test.ts
   site.test.ts
 ```
 
@@ -116,7 +120,7 @@ npm run smoke:standalone
 
 `main` 向けPull Requestと `main` へのpushでは、以下をGitHub Actionsで分けて確認します。
 
-- `CI`: さくらのVPS設定・Lint・Test・Build・standalone起動スモークテスト
+- `CI`: さくらのVPS設定・セキュリティヘッダー・Lint・Test・Build・standalone起動スモークテスト
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 
@@ -141,6 +145,8 @@ npm run smoke:standalone
 
 公開後の外形監視・障害Issue・復旧確認は [本番サイトの外形監視](docs/production-monitoring.md) を参照してください。
 
+HTTPセキュリティヘッダーの定義、CSPの制約、HSTSの運用は [HTTPセキュリティヘッダー運用](docs/security-headers.md) を参照してください。
+
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
 ### 基本的な本番ビルド
@@ -160,6 +166,8 @@ npm run start
 ```bash
 SMOKE_BASE_URL=https://example.com npm run smoke
 ```
+
+スモークテストでは主要ページの内容に加え、共通セキュリティヘッダーと`X-Powered-By`非公開も確認します。
 
 ### GitHub Actions本番手動デプロイ
 
