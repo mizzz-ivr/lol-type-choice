@@ -4,6 +4,8 @@ set -Eeuo pipefail
 workflow_file=".github/workflows/release-readiness.yml"
 logic_file="scripts/release-readiness.mjs"
 test_file="scripts/test-release-readiness.mjs"
+domain_logic_file="scripts/domain-security-check.mjs"
+merge_file="scripts/merge-domain-security-readiness.mjs"
 doc_file="docs/release-readiness.md"
 
 fail() {
@@ -11,12 +13,20 @@ fail() {
   exit 1
 }
 
-for file in "${workflow_file}" "${logic_file}" "${test_file}" "${doc_file}"; do
+for file in \
+  "${workflow_file}" \
+  "${logic_file}" \
+  "${test_file}" \
+  "${domain_logic_file}" \
+  "${merge_file}" \
+  "${doc_file}"; do
   [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
 done
 
 node --check "${logic_file}"
 node --check "${test_file}"
+node --check "${domain_logic_file}"
+node --check "${merge_file}"
 
 require_text() {
   local file=$1
@@ -52,6 +62,11 @@ require_text "${workflow_file}" 'ssh-keygen -F'
 require_text "${workflow_file}" 'trap cleanup EXIT'
 require_text "${workflow_file}" '[監視] 本番サイトの外形監視で異常を検知'
 require_text "${workflow_file}" 'node scripts/smoke-test.mjs'
+require_text "${workflow_file}" '公開後DNS・TLS証明書を確認'
+require_text "${workflow_file}" 'node scripts/domain-security-check.mjs'
+require_text "${workflow_file}" 'node scripts/merge-domain-security-readiness.mjs'
+require_text "${workflow_file}" 'id: merged_report'
+require_text "${workflow_file}" "if: steps.merged_report.outcome != 'success'"
 require_text "${workflow_file}" 'actions/upload-artifact@v4'
 require_text "${workflow_file}" 'retention-days: 7'
 require_absent_text "${workflow_file}" 'ssh-keyscan'
@@ -112,8 +127,18 @@ require_text "${logic_file}" 'post_deploy_smoke'
 require_absent_text "${logic_file}" 'process.env.PRODUCTION_SSH_PRIVATE_KEY'
 require_absent_text "${logic_file}" 'process.env.PRODUCTION_SSH_KNOWN_HOSTS'
 
+require_text "${domain_logic_file}" 'rejectUnauthorized: true'
+require_text "${domain_logic_file}" 'minVersion: "TLSv1.2"'
+require_absent_text "${domain_logic_file}" 'rejectUnauthorized: false'
+require_absent_text "${domain_logic_file}" 'NODE_TLS_REJECT_UNAUTHORIZED'
+
+require_text "${merge_file}" 'domainStatus === "healthy" || domainStatus === "warning"'
+require_text "${merge_file}" 'domainStatus === "critical"'
+require_text "${merge_file}" 'id: "domain_security"'
+
 require_text "${doc_file}" 'pre_deploy'
 require_text "${doc_file}" 'post_deploy'
+require_text "${doc_file}" 'DNS・TLS'
 require_text "${doc_file}" 'NO-GO'
 require_text "${doc_file}" '本番デプロイは実行しません'
 
