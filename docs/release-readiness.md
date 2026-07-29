@@ -2,7 +2,7 @@
 
 ## 目的
 
-本番公開の直前と公開直後に、コード品質、本番設定、SSH鍵、known_hosts、監視障害、公開URLを横断して確認し、リリース可否を`GO`または`NO-GO`で判定します。
+本番公開の直前と公開直後に、コード品質、本番設定、SSH鍵、known_hosts、監視障害、公開URL、DNS・TLS証明書を横断して確認し、リリース可否を`GO`または`NO-GO`で判定します。
 
 判定Workflowは確認専用です。本番デプロイは実行しません。
 
@@ -37,9 +37,9 @@ GitHub Actions画面から手動実行します。pushやscheduleでは起動し
 
 本番デプロイ後に使用します。
 
-`pre_deploy`の全確認に加えて、`PRODUCTION_SITE_URL`へ既存の本番スモークテストを実行します。
+`pre_deploy`の全確認に加えて、`PRODUCTION_SITE_URL`へ本番スモークテストとDNS・TLS証明書確認を実行します。
 
-確認対象:
+HTTP確認対象:
 
 - `/`
 - `/diagnosis`
@@ -48,6 +48,26 @@ GitHub Actions画面から手動実行します。pushやscheduleでは起動し
 - `/sitemap.xml`
 - HTTPセキュリティヘッダー
 - `X-Powered-By`が非公開であること
+
+DNS・TLS確認対象:
+
+- DNS解決結果が1件以上あること
+- DNSが公開IPへ解決されること
+- 検証済みIPへTLS 1.2以上で接続できること
+- 証明書チェーンとホスト名を検証できること
+- 証明書が有効期間内であること
+- 証明書の残日数が重大しきい値を超えていること
+
+証明書残日数の扱い:
+
+| 残日数 | post_deploy判定 |
+|---|---|
+| 31日以上 | GO条件を満たす |
+| 15〜30日 | 警告として記録するがGOを維持 |
+| 14日以下 | NO-GO |
+| 期限切れ・未有効・検証失敗 | NO-GO |
+
+警告は日次のDomain Security MonitoringでIssue化し、リリース作業とは分けて追跡します。
 
 ## 実行方法
 
@@ -108,6 +128,14 @@ WorkflowはSecretの値をMarkdown、JSON、ログへ出力しません。
 
 監視異常を解消し、Production Monitoringが復旧確認してIssueをクローズしてから再判定します。
 
+DNS・TLSについては`post_deploy`実行時に最新状態を直接確認します。日次監視の固定タイトルは次のとおりです。
+
+```text
+[監視] 本番ドメインまたはTLS証明書に問題を検知
+```
+
+このIssueが警告の場合は公開継続できますが、証明書更新を放置しません。重大判定は`post_deploy`でもNO-GOになります。
+
 ## 判定結果
 
 ### GO
@@ -132,9 +160,13 @@ Workflowは以下を7日間のArtifactとして保存します。
 ```text
 release-readiness-report.json
 release-readiness-report.md
+domain-security-report.json
+domain-security-report.md
 ```
 
-JSONには以下を含みます。
+`pre_deploy`ではDNS・TLSレポートを生成しないため、Artifact内に含まれない場合があります。
+
+リリース可否JSONには以下を含みます。
 
 - 判定日時
 - 判定モード
@@ -142,7 +174,9 @@ JSONには以下を含みます。
 - `GO`または`NO-GO`
 - 各確認項目の結果と説明
 
-SSH秘密鍵、known_hostsの内容、環境変数の実値は含めません。
+DNS・TLSレポートにはDNS解決結果、TLSプロトコル、証明書CN、発行者、有効期限、残日数、SANを含みます。
+
+SSH秘密鍵、known_hostsの内容、環境変数の実値、証明書の生PEM・DERは含めません。
 
 ## 権限と分離
 
@@ -162,10 +196,13 @@ permissions:
 - PM2再起動
 - DNS変更
 - SSL変更
+- Certbot実行
 - 本番デプロイ
 - Issue作成・更新・クローズ
 
 品質確認ジョブは`production` Environment Secretを参照しません。本番設定確認ジョブだけがEnvironment到達後にSecretの形式を確認します。
+
+DNS・TLS確認はSecretを使用せず、Repository Variable `PRODUCTION_SITE_URL`だけを利用します。
 
 ## 推奨する公開手順
 
@@ -174,8 +211,9 @@ permissions:
 3. `GO`を確認
 4. 本番手動デプロイを実行
 5. Release Readinessを`post_deploy`で実行
-6. `GO`を確認
+6. HTTP・DNS・TLSを含む`GO`を確認
 7. Production Monitoringの定期実行を確認
+8. Domain Security Monitoringの日次実行を確認
 
 ## トラブルシューティング
 
@@ -204,3 +242,14 @@ SMOKE_BASE_URL=https://<公開ドメイン> npm run smoke
 ```
 
 をローカルでも実行し、失敗したエンドポイントまたはヘッダーを確認します。
+
+### DNS・TLSがNO-GO
+
+1. `PRODUCTION_SITE_URL`のホスト名を確認
+2. A・AAAA・CNAMEの解決先を確認
+3. Certbotの更新履歴とタイマーを確認
+4. Nginxの証明書参照先と`server_name`を確認
+5. 証明書更新後にNginxをreload
+6. Release Readinessを`post_deploy`で再実行
+
+詳細は[本番ドメイン・TLS証明書監視](domain-security-monitoring.md)を参照してください。
