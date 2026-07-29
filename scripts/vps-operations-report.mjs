@@ -157,12 +157,24 @@ export const loadAndNormalizeReport = async ({ reportPath, sshSucceeded = true }
     return makeFallbackReport("制限付きSSHによるVPS運用監査に失敗しました。");
   }
 
+  let raw;
   try {
-    const raw = await readFile(reportPath, "utf8");
-    const parsed = JSON.parse(raw);
+    raw = await readFile(reportPath, "utf8");
+  } catch {
+    return makeFallbackReport("VPS運用監査レポートを読み取れません。");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return makeFallbackReport("VPS運用監査レポートのJSON形式が不正です。");
+  }
+
+  try {
     return validateVpsOperationsReport(parsed);
-  } catch (error) {
-    return makeFallbackReport(error instanceof Error ? error.message : "監査レポートを検証できません。");
+  } catch {
+    return makeFallbackReport("VPS運用監査レポートのスキーマまたは値が不正です。");
   }
 };
 
