@@ -113,6 +113,11 @@ jobs:
       INCIDENT_TITLE: "[監視] 本番サイトの外形監視で異常を検知"
       RELEASE_REPORT_PATH: release-readiness-report.json
       RELEASE_MARKDOWN_PATH: release-readiness-report.md
+      DOMAIN_SECURITY_REPORT_PATH: domain-security-report.json
+      DOMAIN_SECURITY_MARKDOWN_PATH: domain-security-report.md
+      TLS_WARNING_DAYS: "30"
+      TLS_CRITICAL_DAYS: "14"
+      DOMAIN_CHECK_TIMEOUT_MS: "10000"
 
     steps:
       - name: 判定対象を取得
@@ -218,7 +223,22 @@ jobs:
           SMOKE_BASE_URL: ${{ vars.PRODUCTION_SITE_URL }}
         run: node scripts/smoke-test.mjs
 
-      - name: リリース可否レポートを生成
+      - name: 公開後DNS・TLS証明書を確認
+        id: post_domain_security
+        if: inputs.mode == 'post_deploy'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/domain-security-check.mjs 2>&1 \
+            | tee domain-security-output.log
+
+      - name: DNS・TLS監視結果をサマリーへ追加
+        if: inputs.mode == 'post_deploy' && hashFiles('domain-security-report.md') != ''
+        shell: bash
+        run: cat domain-security-report.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 基本リリース可否レポートを生成
         id: report
         continue-on-error: true
         env:
@@ -236,6 +256,13 @@ jobs:
           set -o pipefail
           node scripts/release-readiness.mjs | tee release-readiness-output.log
 
+      - name: DNS・TLS結果をリリース可否へ統合
+        id: merged_report
+        if: always() && hashFiles('release-readiness-report.json') != ''
+        continue-on-error: true
+        shell: bash
+        run: node scripts/merge-domain-security-readiness.mjs
+
       - name: 判定結果をサマリーへ追加
         if: always() && hashFiles('release-readiness-report.md') != ''
         shell: bash
@@ -249,11 +276,13 @@ jobs:
           path: |
             release-readiness-report.json
             release-readiness-report.md
-          if-no-files-found: error
+            domain-security-report.json
+            domain-security-report.md
+          if-no-files-found: warn
           retention-days: 7
 
       - name: NO-GOの場合は失敗として終了
-        if: steps.report.outcome != 'success'
+        if: steps.merged_report.outcome != 'success'
         shell: bash
         run: |
           echo "リリース可否判定がNO-GOです。サマリーの失敗項目を確認してください。" >&2
