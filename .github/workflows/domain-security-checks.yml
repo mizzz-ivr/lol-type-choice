@@ -37,3 +37,6 @@ jobs:
 
       - name: DNS・TLS監視の正常・警告・異常系を検証
         run: node scripts/test-domain-security-check.mjs
+
+      - name: DNS・TLS結果のリリース可否統合を検証
+        run: node scripts/test-merge-domain-security-readiness.mjs
