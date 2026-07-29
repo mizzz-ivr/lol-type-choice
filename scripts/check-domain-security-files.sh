@@ -2,8 +2,11 @@
 set -Eeuo pipefail
 
 workflow_file=".github/workflows/domain-security-monitoring.yml"
+readiness_workflow=".github/workflows/release-readiness.yml"
 logic_file="scripts/domain-security-check.mjs"
 test_file="scripts/test-domain-security-check.mjs"
+merge_file="scripts/merge-domain-security-readiness.mjs"
+merge_test_file="scripts/test-merge-domain-security-readiness.mjs"
 doc_file="docs/domain-security-monitoring.md"
 
 fail() {
@@ -11,12 +14,21 @@ fail() {
   exit 1
 }
 
-for file in "${workflow_file}" "${logic_file}" "${test_file}" "${doc_file}"; do
+for file in \
+  "${workflow_file}" \
+  "${readiness_workflow}" \
+  "${logic_file}" \
+  "${test_file}" \
+  "${merge_file}" \
+  "${merge_test_file}" \
+  "${doc_file}"; do
   [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
 done
 
 node --check "${logic_file}"
 node --check "${test_file}"
+node --check "${merge_file}"
+node --check "${merge_test_file}"
 
 require_text() {
   local file=$1
@@ -71,9 +83,23 @@ require_absent_text "${logic_file}" 'NODE_TLS_REJECT_UNAUTHORIZED'
 require_absent_text "${logic_file}" 'rejectUnauthorized: false'
 require_absent_text "${logic_file}" 'process.env.PRODUCTION_SSH'
 
+require_text "${readiness_workflow}" '公開後DNS・TLS証明書を確認'
+require_text "${readiness_workflow}" 'scripts/domain-security-check.mjs'
+require_text "${readiness_workflow}" 'scripts/merge-domain-security-readiness.mjs'
+require_text "${readiness_workflow}" 'id: merged_report'
+require_text "${readiness_workflow}" "if: inputs.mode == 'post_deploy'"
+require_text "${readiness_workflow}" "if: steps.merged_report.outcome != 'success'"
+
+require_text "${merge_file}" 'domainStatus === "healthy" || domainStatus === "warning"'
+require_text "${merge_file}" 'domainStatus === "critical"'
+require_text "${merge_file}" 'id: "domain_security"'
+require_absent_text "${merge_file}" 'secrets.'
+require_absent_text "${merge_file}" 'PRODUCTION_SSH_PRIVATE_KEY'
+
 require_text "${doc_file}" '30日'
 require_text "${doc_file}" '14日'
 require_text "${doc_file}" '自動更新しません'
 require_text "${doc_file}" '検証済みIP'
+require_text "${doc_file}" 'post_deploy'
 
 echo "DNS・TLS証明書監視の安全条件検証に成功しました。"
