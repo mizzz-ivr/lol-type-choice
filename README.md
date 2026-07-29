@@ -44,6 +44,7 @@ docs/
   deployment-github-actions.md
   deployment-rental-server.md
   deployment-sakura-vps.md
+  domain-security-monitoring.md
   production-monitoring.md
   release-readiness.md
   security-headers.md
@@ -57,16 +58,21 @@ lib/
   validation.ts
 scripts/
   bootstrap-sakura-vps.sh
+  check-domain-security-files.sh
   check-production-deployment-files.sh
   check-production-monitoring-files.sh
   check-release-readiness-files.sh
   check-sakura-vps-files.sh
   deploy-production-release.sh
+  domain-security-check.mjs
+  merge-domain-security-readiness.mjs
   prepare-standalone.mjs
   production-health-check.mjs
   release-readiness.mjs
   smoke-standalone.mjs
   smoke-test.mjs
+  test-domain-security-check.mjs
+  test-merge-domain-security-readiness.mjs
   test-production-health-check.mjs
   test-production-release.sh
   test-release-readiness.mjs
@@ -116,6 +122,9 @@ bash scripts/check-production-monitoring-files.sh
 node scripts/test-production-health-check.mjs
 bash scripts/check-release-readiness-files.sh
 node scripts/test-release-readiness.mjs
+bash scripts/check-domain-security-files.sh
+node scripts/test-domain-security-check.mjs
+node scripts/test-merge-domain-security-readiness.mjs
 npm run lint
 npm run test
 npm run build
@@ -130,6 +139,7 @@ npm run smoke:standalone
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 - `Release Readiness Checks`: リリース判定Workflowの最小権限・GO／NO-GO判定・Secret非出力
+- `Domain Security Checks`: DNS・TLS監視の接続先制約・証明書期限判定・リリース判定連携
 
 いずれかが失敗した場合、対象の品質ゲートは失敗として終了します。
 
@@ -152,7 +162,9 @@ npm run smoke:standalone
 
 公開前後のGO／NO-GO判定は [リリース可否判定](docs/release-readiness.md) を参照してください。
 
-公開後の外形監視・障害Issue・復旧確認は [本番サイトの外形監視](docs/production-monitoring.md) を参照してください。
+公開後のHTTP外形監視・障害Issue・復旧確認は [本番サイトの外形監視](docs/production-monitoring.md) を参照してください。
+
+DNS解決、TLS証明書の信頼性、有効期限の事前警告は [本番ドメイン・TLS証明書監視](docs/domain-security-monitoring.md) を参照してください。
 
 HTTPセキュリティヘッダーの定義、CSPの制約、HSTSの運用は [HTTPセキュリティヘッダー運用](docs/security-headers.md) を参照してください。
 
@@ -183,7 +195,7 @@ SMOKE_BASE_URL=https://example.com npm run smoke
 `.github/workflows/release-readiness.yml` は、GitHub Actions画面から手動で実行します。
 
 - `pre_deploy`: 本番デプロイ前のコード品質・Environment設定・SSH鍵・known_hosts・監視障害を確認
-- `post_deploy`: `pre_deploy`の確認に加え、本番URLへスモークテストを実行
+- `post_deploy`: `pre_deploy`の確認に加え、本番URLのHTTPスモーク、DNS解決、TLS証明書を確認
 
 実行には次を入力します。
 
@@ -192,6 +204,8 @@ SMOKE_BASE_URL=https://example.com npm run smoke
 - 確認文字列`CHECK`
 
 判定結果は`GO`または`NO-GO`としてGitHub Actions SummaryとJSON／Markdown Artifactへ保存されます。このWorkflowはSSH接続、SCP、本番デプロイ、Issue更新を行いません。
+
+TLS証明書は残日数15〜30日を警告、14日以下を重大として扱います。警告はGOを維持しますが、重大は`post_deploy`をNO-GOにします。
 
 ### GitHub Actions本番手動デプロイ
 
@@ -222,6 +236,27 @@ SMOKE_BASE_URL=https://example.com npm run smoke
 PRODUCTION_SITE_URL=https://example.com \
 HEALTH_REPORT_PATH=production-health-report.json \
 node scripts/production-health-check.mjs
+```
+
+### DNS・TLS証明書監視
+
+`.github/workflows/domain-security-monitoring.yml` は、Repository Variable `PRODUCTION_SITE_URL` が設定されている場合に毎日実行します。
+
+- A・AAAA相当のDNS解決結果があること
+- 解決先が公開IPであること
+- 検証済みIPへTLS 1.2以上で接続できること
+- 証明書チェーンとホスト名が有効であること
+- 証明書の残日数がしきい値を超えていること
+
+警告または重大判定時は固定タイトルのIssueを作成または更新し、正常化時にクローズします。DNS変更、Certbot実行、証明書更新、Nginx reloadは自動実行しません。
+
+ローカルから実行する場合:
+
+```bash
+PRODUCTION_SITE_URL=https://example.com \
+TLS_WARNING_DAYS=30 \
+TLS_CRITICAL_DAYS=14 \
+node scripts/domain-security-check.mjs
 ```
 
 ## ヘルスチェック

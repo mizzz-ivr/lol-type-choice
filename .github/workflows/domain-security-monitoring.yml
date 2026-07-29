@@ -1,0 +1,160 @@
+name: Domain Security Monitoring
+
+on:
+  schedule:
+    - cron: "23 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-domain-security-monitoring
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    name: 本番DNS・TLS証明書監視
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PRODUCTION_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+      TLS_WARNING_DAYS: "30"
+      TLS_CRITICAL_DAYS: "14"
+      DOMAIN_CHECK_TIMEOUT_MS: "10000"
+      DOMAIN_SECURITY_REPORT_PATH: domain-security-report.json
+      DOMAIN_SECURITY_MARKDOWN_PATH: domain-security-report.md
+      INCIDENT_TITLE: "[監視] 本番ドメインまたはTLS証明書に問題を検知"
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: 監視設定を確認
+        id: settings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${PRODUCTION_SITE_URL}" ]]; then
+            echo "configured=false" >>"${GITHUB_OUTPUT}"
+            {
+              echo "### DNS・TLS証明書監視をスキップ"
+              echo
+              echo "Repository Variable \`PRODUCTION_SITE_URL\` が未設定です。"
+            } >>"${GITHUB_STEP_SUMMARY}"
+          else
+            echo "configured=true" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - name: DNSとTLS証明書を確認
+        id: domain_security
+        if: steps.settings.outputs.configured == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/domain-security-check.mjs 2>&1 \
+            | tee domain-security-output.log
+
+      - name: 監視結果をサマリーへ追加
+        if: steps.settings.outputs.configured == 'true' && hashFiles('domain-security-report.md') != ''
+        shell: bash
+        run: cat domain-security-report.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 監視レポートを保存
+        if: steps.settings.outputs.configured == 'true' && hashFiles('domain-security-report.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: domain-security-report-${{ github.run_id }}
+          path: |
+            domain-security-report.json
+            domain-security-report.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 警告Issueを作成または更新
+        if: steps.settings.outputs.configured == 'true' && steps.domain_security.outcome == 'failure'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          {
+            echo "## 本番ドメインまたはTLS証明書に問題を検知"
+            echo
+            if [[ -f "${DOMAIN_SECURITY_MARKDOWN_PATH}" ]]; then
+              cat "${DOMAIN_SECURITY_MARKDOWN_PATH}"
+            else
+              echo "DNS・TLS監視レポートを生成できませんでした。"
+            fi
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+            echo "- 自動修復: 実施していません"
+            echo "- 確認事項: DNSレコード、証明書の有効期限、Certbot更新履歴、Nginxの証明書参照先を確認してください。"
+          } >incident.md
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" --body-file incident.md
+            echo "既存の警告Issue #${issue_number}へ結果を追記しました。" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            issue_url="$(gh issue create --title "${INCIDENT_TITLE}" --body-file incident.md)"
+            echo "警告Issueを作成しました: ${issue_url}" >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: 復旧Issueをクローズ
+        if: steps.settings.outputs.configured == 'true' && steps.domain_security.outcome == 'success'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -z "${issue_number}" ]]; then
+            echo "クローズ対象の警告Issueはありません。" >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          {
+            echo "## 本番ドメインとTLS証明書の正常化を確認"
+            echo
+            cat "${DOMAIN_SECURITY_MARKDOWN_PATH}"
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+          } >recovery.md
+
+          gh issue comment "${issue_number}" --body-file recovery.md
+          gh issue close "${issue_number}" --reason completed
+          echo "警告Issue #${issue_number}を正常化済みとしてクローズしました。" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 警告・重大時はWorkflowを失敗として終了
+        if: steps.settings.outputs.configured == 'true' && steps.domain_security.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "DNSまたはTLS証明書の確認で警告・重大判定になりました。" >&2
+          exit 1
