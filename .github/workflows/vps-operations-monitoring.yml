@@ -1,0 +1,233 @@
+name: VPS Operations Monitoring
+
+on:
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: vps-operations-monitoring
+  cancel-in-progress: true
+
+jobs:
+  observe:
+    name: VPS運用状態を制限付きSSHで監査
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production-observability
+    env:
+      OBSERVABILITY_HOST: ${{ vars.OBSERVABILITY_HOST }}
+      OBSERVABILITY_USER: ${{ vars.OBSERVABILITY_USER }}
+      OBSERVABILITY_SSH_PORT: ${{ vars.OBSERVABILITY_SSH_PORT }}
+      VPS_OPERATIONS_RAW_REPORT: vps-operations-raw.json
+      VPS_OPERATIONS_REPORT_PATH: vps-operations-report.json
+      VPS_OPERATIONS_MARKDOWN_PATH: vps-operations-report.md
+      INCIDENT_TITLE: "[監視] VPS運用監査で異常を検知"
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: 監査接続設定を確認
+        id: settings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${OBSERVABILITY_HOST}" || -z "${OBSERVABILITY_USER}" || -z "${OBSERVABILITY_SSH_PORT}" ]]; then
+            echo "configured=false" >>"${GITHUB_OUTPUT}"
+            {
+              echo "### VPS運用監査をスキップ"
+              echo
+              echo "production-observability Environmentの接続先Variableが未設定です。"
+            } >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          [[ "${OBSERVABILITY_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] \
+            || { echo "OBSERVABILITY_HOSTの形式が不正です。" >&2; exit 1; }
+          [[ "${OBSERVABILITY_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] \
+            || { echo "OBSERVABILITY_USERの形式が不正です。" >&2; exit 1; }
+          [[ "${OBSERVABILITY_SSH_PORT}" =~ ^[0-9]+$ ]] \
+            || { echo "OBSERVABILITY_SSH_PORTの形式が不正です。" >&2; exit 1; }
+          (( OBSERVABILITY_SSH_PORT >= 1 && OBSERVABILITY_SSH_PORT <= 65535 )) \
+            || { echo "OBSERVABILITY_SSH_PORTが範囲外です。" >&2; exit 1; }
+
+          echo "configured=true" >>"${GITHUB_OUTPUT}"
+
+      - name: 監査専用SSH鍵とknown_hostsを設定
+        id: ssh_setup
+        if: steps.settings.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          OBSERVABILITY_SSH_PRIVATE_KEY: ${{ secrets.OBSERVABILITY_SSH_PRIVATE_KEY }}
+          OBSERVABILITY_SSH_KNOWN_HOSTS: ${{ secrets.OBSERVABILITY_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          [[ -n "${OBSERVABILITY_SSH_PRIVATE_KEY}" ]] \
+            || { echo "OBSERVABILITY_SSH_PRIVATE_KEYが未設定です。" >&2; exit 1; }
+          [[ -n "${OBSERVABILITY_SSH_KNOWN_HOSTS}" ]] \
+            || { echo "OBSERVABILITY_SSH_KNOWN_HOSTSが未設定です。" >&2; exit 1; }
+
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${OBSERVABILITY_SSH_PRIVATE_KEY}" >"${HOME}/.ssh/observer_key"
+          printf '%s\n' "${OBSERVABILITY_SSH_KNOWN_HOSTS}" >"${HOME}/.ssh/observer_known_hosts"
+          chmod 0600 "${HOME}/.ssh/observer_key" "${HOME}/.ssh/observer_known_hosts"
+          ssh-keygen -y -f "${HOME}/.ssh/observer_key" >/dev/null
+
+          if [[ "${OBSERVABILITY_SSH_PORT}" == "22" ]]; then
+            lookup_host="${OBSERVABILITY_HOST}"
+          else
+            lookup_host="[${OBSERVABILITY_HOST}]:${OBSERVABILITY_SSH_PORT}"
+          fi
+          ssh-keygen -F "${lookup_host}" -f "${HOME}/.ssh/observer_known_hosts" >/dev/null \
+            || { echo "known_hostsに監査接続先のホスト鍵がありません。" >&2; exit 1; }
+
+      - name: 制限付きSSHでVPS運用状態を取得
+        id: observation
+        if: steps.settings.outputs.configured == 'true' && steps.ssh_setup.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          target="${OBSERVABILITY_USER}@${OBSERVABILITY_HOST}"
+          ssh \
+            -T \
+            -p "${OBSERVABILITY_SSH_PORT}" \
+            -i "${HOME}/.ssh/observer_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/observer_known_hosts" \
+            -o ConnectTimeout=10 \
+            "${target}" observe \
+            >"${VPS_OPERATIONS_RAW_REPORT}" \
+            2>vps-operations-ssh-error.log
+          ssh_exit_code=$?
+          set -e
+
+          if [[ "${ssh_exit_code}" -eq 0 && -s "${VPS_OPERATIONS_RAW_REPORT}" ]]; then
+            echo "succeeded=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "succeeded=false" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - name: 監査レポートを検証
+        id: report
+        if: steps.settings.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          VPS_OBSERVATION_SSH_SUCCEEDED: ${{ steps.observation.outputs.succeeded == 'true' }}
+        shell: bash
+        run: node scripts/vps-operations-report.mjs
+
+      - name: 監査結果をサマリーへ追加
+        if: steps.settings.outputs.configured == 'true' && hashFiles('vps-operations-report.md') != ''
+        shell: bash
+        run: cat vps-operations-report.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 監査レポートを保存
+        if: steps.settings.outputs.configured == 'true' && hashFiles('vps-operations-report.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-operations-${{ github.run_id }}
+          path: |
+            vps-operations-report.json
+            vps-operations-report.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 障害Issueを作成または更新
+        if: steps.settings.outputs.configured == 'true' && steps.report.outcome == 'failure'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -f "${VPS_OPERATIONS_MARKDOWN_PATH}" ]]; then
+            cp "${VPS_OPERATIONS_MARKDOWN_PATH}" incident.md
+          else
+            printf '## VPS運用監査で異常を検知\n\n監査レポートを生成できませんでした。\n' >incident.md
+          fi
+          {
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+            echo "- 自動復旧操作: 実施していません"
+            echo "- 確認事項: Nginx、PM2、ローカルhealth、current、ディスク、Certbot timerを確認してください。"
+          } >>incident.md
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" --body-file incident.md
+            echo "既存のVPS運用障害Issue #${issue_number}へ追記しました。" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            issue_url="$(gh issue create --title "${INCIDENT_TITLE}" --body-file incident.md)"
+            echo "VPS運用障害Issueを作成しました: ${issue_url}" >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: 復旧Issueをクローズ
+        if: steps.settings.outputs.configured == 'true' && steps.report.outcome == 'success'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -z "${issue_number}" ]]; then
+            echo "クローズ対象のVPS運用障害Issueはありません。" >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          cp "${VPS_OPERATIONS_MARKDOWN_PATH}" recovery.md
+          {
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+          } >>recovery.md
+          gh issue comment "${issue_number}" --body-file recovery.md
+          gh issue close "${issue_number}" --reason completed
+          echo "VPS運用障害Issue #${issue_number}を復旧済みとしてクローズしました。" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: SSH一時ファイルを削除
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- \
+            "${HOME}/.ssh/observer_key" \
+            "${HOME}/.ssh/observer_known_hosts" \
+            vps-operations-ssh-error.log
+
+      - name: 異常時はWorkflowを失敗として終了
+        if: steps.settings.outputs.configured == 'true' && steps.report.outcome != 'success'
+        shell: bash
+        run: |
+          echo "VPS運用監査で警告または重大異常を検知しました。" >&2
+          exit 1
