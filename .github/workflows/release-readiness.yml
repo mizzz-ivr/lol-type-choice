@@ -1,0 +1,260 @@
+name: Release Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: mainに含まれる40桁のコミットSHA
+        required: true
+        type: string
+      mode:
+        description: 判定段階
+        required: true
+        default: pre_deploy
+        type: choice
+        options:
+          - pre_deploy
+          - post_deploy
+      confirmation:
+        description: 実行確認としてCHECKと入力
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: release-readiness
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: 対象コミットの品質確認
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_SHA: ${{ inputs.commit_sha }}
+      RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+
+    steps:
+      - name: 実行条件を検証
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] \
+            || { echo "mainブランチから実行してください。" >&2; exit 1; }
+          [[ "${RELEASE_CONFIRMATION}" == "CHECK" ]] \
+            || { echo "confirmationにはCHECKを入力してください。" >&2; exit 1; }
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "commit_shaは40桁の小文字16進数で指定してください。" >&2; exit 1; }
+
+      - name: 判定対象を取得
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: mainに含まれるコミットか検証
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${RELEASE_SHA}" ]] \
+            || { echo "checkout結果が指定SHAと一致しません。" >&2; exit 1; }
+
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${RELEASE_SHA}" origin/main \
+            || { echo "指定SHAはmainに含まれていません。" >&2; exit 1; }
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 依存関係をインストール
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Standaloneスモークテスト
+        run: npm run smoke:standalone
+
+  readiness:
+    name: production設定とリリース可否判定
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_SITE_URL }}
+    env:
+      RELEASE_MODE: ${{ inputs.mode }}
+      RELEASE_SHA: ${{ inputs.commit_sha }}
+      PRODUCTION_SITE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+      PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+      PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
+      PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT }}
+      PRODUCTION_APP_ROOT: ${{ vars.PRODUCTION_APP_ROOT }}
+      INCIDENT_TITLE: "[監視] 本番サイトの外形監視で異常を検知"
+      RELEASE_REPORT_PATH: release-readiness-report.json
+      RELEASE_MARKDOWN_PATH: release-readiness-report.md
+
+    steps:
+      - name: 判定対象を取得
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: 未解決の監視障害Issueを確認
+        id: incidents
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --limit 100 \
+            --json number,title \
+            > open-issues.json
+
+          incident_count="$(
+            node --input-type=module <<'NODE'
+            import { readFile } from "node:fs/promises";
+            const issues = JSON.parse(await readFile("open-issues.json", "utf8"));
+            const count = issues.filter((issue) => issue.title === process.env.INCIDENT_TITLE).length;
+            process.stdout.write(String(count));
+            NODE
+          )"
+
+          [[ "${incident_count}" =~ ^[0-9]+$ ]] \
+            || { echo "監視障害Issue数を判定できません。" >&2; exit 1; }
+          echo "count=${incident_count}" >>"${GITHUB_OUTPUT}"
+
+      - name: 本番SSH設定を値を出力せず検証
+        id: ssh_settings
+        env:
+          PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          PRODUCTION_SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          private_key_configured=false
+          private_key_valid=false
+          known_hosts_configured=false
+          known_hosts_match=false
+          ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          private_key_path="${HOME}/.ssh/readiness_key"
+          known_hosts_path="${HOME}/.ssh/readiness_known_hosts"
+
+          cleanup() {
+            rm -f "${private_key_path}" "${known_hosts_path}"
+          }
+          trap cleanup EXIT
+
+          install -d -m 0700 "${HOME}/.ssh"
+
+          if [[ -n "${PRODUCTION_SSH_PRIVATE_KEY}" ]]; then
+            private_key_configured=true
+            printf '%s\n' "${PRODUCTION_SSH_PRIVATE_KEY}" >"${private_key_path}"
+            chmod 0600 "${private_key_path}"
+            if ssh-keygen -y -f "${private_key_path}" >/dev/null 2>&1; then
+              private_key_valid=true
+            fi
+          fi
+
+          if [[ -n "${PRODUCTION_SSH_KNOWN_HOSTS}" ]]; then
+            known_hosts_configured=true
+            printf '%s\n' "${PRODUCTION_SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+            chmod 0600 "${known_hosts_path}"
+
+            if [[ "${ssh_port}" =~ ^[0-9]+$ && -n "${PRODUCTION_HOST}" ]]; then
+              if [[ "${ssh_port}" == "22" ]]; then
+                lookup_host="${PRODUCTION_HOST}"
+              else
+                lookup_host="[${PRODUCTION_HOST}]:${ssh_port}"
+              fi
+
+              if ssh-keygen -F "${lookup_host}" -f "${known_hosts_path}" >/dev/null 2>&1; then
+                known_hosts_match=true
+              fi
+            fi
+          fi
+
+          echo "private_key_configured=${private_key_configured}" >>"${GITHUB_OUTPUT}"
+          echo "private_key_valid=${private_key_valid}" >>"${GITHUB_OUTPUT}"
+          echo "known_hosts_configured=${known_hosts_configured}" >>"${GITHUB_OUTPUT}"
+          echo "known_hosts_match=${known_hosts_match}" >>"${GITHUB_OUTPUT}"
+
+      - name: 公開後スモークテスト
+        id: post_smoke
+        if: inputs.mode == 'post_deploy'
+        continue-on-error: true
+        env:
+          SMOKE_BASE_URL: ${{ vars.PRODUCTION_SITE_URL }}
+        run: node scripts/smoke-test.mjs
+
+      - name: リリース可否レポートを生成
+        id: report
+        continue-on-error: true
+        env:
+          PRODUCTION_SSH_PORT: ${{ vars.PRODUCTION_SSH_PORT || '__missing__' }}
+          PRODUCTION_APP_ROOT: ${{ vars.PRODUCTION_APP_ROOT || '__missing__' }}
+          QUALITY_CHECKS_PASSED: "true"
+          PRIVATE_KEY_CONFIGURED: ${{ steps.ssh_settings.outputs.private_key_configured }}
+          PRIVATE_KEY_VALID: ${{ steps.ssh_settings.outputs.private_key_valid }}
+          KNOWN_HOSTS_CONFIGURED: ${{ steps.ssh_settings.outputs.known_hosts_configured }}
+          KNOWN_HOSTS_MATCH: ${{ steps.ssh_settings.outputs.known_hosts_match }}
+          OPEN_INCIDENT_COUNT: ${{ steps.incidents.outputs.count }}
+          POST_DEPLOY_SMOKE_PASSED: ${{ steps.post_smoke.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/release-readiness.mjs | tee release-readiness-output.log
+
+      - name: 判定結果をサマリーへ追加
+        if: always() && hashFiles('release-readiness-report.md') != ''
+        shell: bash
+        run: cat release-readiness-report.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 判定レポートを保存
+        if: always() && hashFiles('release-readiness-report.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-${{ inputs.commit_sha }}-${{ inputs.mode }}
+          path: |
+            release-readiness-report.json
+            release-readiness-report.md
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: NO-GOの場合は失敗として終了
+        if: steps.report.outcome != 'success'
+        shell: bash
+        run: |
+          echo "リリース可否判定がNO-GOです。サマリーの失敗項目を確認してください。" >&2
+          exit 1
