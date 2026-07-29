@@ -1,0 +1,42 @@
+name: VPS Operations Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-operations-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vps-operations-safety:
+    name: VPS運用監査の安全性検証
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Workflow・forced command・禁止操作を静的検証
+        run: bash scripts/check-vps-operations-files.sh
+
+      - name: VPS運用監査の正常・警告・重大系を検証
+        run: node scripts/test-vps-observer.mjs
+
+      - name: 監査レポートの不正JSON・スキーマを検証
+        run: node scripts/test-vps-operations-report.mjs
