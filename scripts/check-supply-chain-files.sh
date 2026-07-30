@@ -84,7 +84,7 @@ require_absent_text "${report_file}" 'process.env.NPM_TOKEN'
 
 require_text "${package_file}" '"supply-chain": "bash scripts/generate-supply-chain-artifacts.sh"'
 require_text "${deploy_workflow}" 'npm run supply-chain'
-require_text "${deploy_workflow}" 'cp -R supply-chain dist/supply-chain'
+require_text "${deploy_workflow}" 'dist/supply-chain/'
 require_text "${deploy_workflow}" 'supply-chain.sha256'
 require_text "${deploy_check}" 'npm run supply-chain'
 require_text "${deploy_check}" 'supply-chain.sha256'
