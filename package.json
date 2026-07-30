@@ -34,9 +34,7 @@
     "vitest": "3.2.7"
   },
   "overrides": {
-    "next": {
-      "postcss": "$postcss",
-      "sharp": "0.35.3"
-    }
+    "postcss": "$postcss",
+    "sharp": "0.35.3"
   }
 }
