@@ -11,8 +11,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-all_sbom="${temporary_directory}/sbom-all.cdx.json"
-production_sbom="${temporary_directory}/sbom-production.cdx.json"
+all_sbom="${temporary_directory}/sbom-all.raw.cdx.json"
+production_sbom="${temporary_directory}/sbom-production.raw.cdx.json"
 
 if ! npm sbom \
   --sbom-format=cyclonedx \
@@ -33,11 +33,12 @@ if ! npm sbom \
   exit 1
 fi
 
-install -m 0600 "${all_sbom}" "${output_dir}/sbom-all.cdx.json"
-install -m 0600 "${production_sbom}" "${output_dir}/sbom-production.cdx.json"
-
-node scripts/diagnose-sbom-refs.mjs "${output_dir}/sbom-all.cdx.json"
-node scripts/diagnose-sbom-refs.mjs "${output_dir}/sbom-production.cdx.json"
+node scripts/normalize-npm-cyclonedx.mjs \
+  "${all_sbom}" \
+  "${output_dir}/sbom-all.cdx.json"
+node scripts/normalize-npm-cyclonedx.mjs \
+  "${production_sbom}" \
+  "${output_dir}/sbom-production.cdx.json"
 
 SUPPLY_CHAIN_ALL_SBOM_PATH="${output_dir}/sbom-all.cdx.json" \
 SUPPLY_CHAIN_PRODUCTION_SBOM_PATH="${output_dir}/sbom-production.cdx.json" \
