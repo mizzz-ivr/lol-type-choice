@@ -55,13 +55,25 @@ require_absent_text "${dependabot_file}" 'target-branch:'
 
 require_text "${review_workflow}" 'pull_request:'
 require_text "${review_workflow}" 'contents: read'
+require_text "${review_workflow}" 'dependency-graph/sbom'
 require_text "${review_workflow}" 'actions/dependency-review-action@v4'
 require_text "${review_workflow}" 'fail-on-severity: high'
+require_text "${review_workflow}" "steps.dependency_graph.outputs.enabled == 'true'"
+require_text "${review_workflow}" "steps.dependency_graph.outputs.enabled != 'true'"
+require_text "${review_workflow}" 'npm ci --ignore-scripts --no-audit --no-fund'
+require_text "${review_workflow}" 'npm audit --json'
+require_text "${review_workflow}" 'npm audit --omit=dev --json'
+require_text "${review_workflow}" 'DEPENDENCY_AUDIT_FAIL_ON_WARNING: "false"'
+require_text "${review_workflow}" 'node scripts/dependency-audit-report.mjs'
 require_text "${review_workflow}" 'persist-credentials: false'
 require_absent_text "${review_workflow}" 'issues: write'
 require_absent_text "${review_workflow}" 'pull-requests: write'
 require_absent_text "${review_workflow}" 'secrets.'
 require_absent_text "${review_workflow}" 'schedule:'
+require_absent_text "${review_workflow}" 'actions/upload-artifact'
+require_absent_text "${review_workflow}" 'npm audit fix'
+require_absent_text "${review_workflow}" 'ssh '
+require_absent_text "${review_workflow}" 'scp '
 
 if grep -Eq '^[[:space:]]+push:' "${review_workflow}"; then
   fail "Dependency Review Workflowにpushトリガーを追加しないでください。"
@@ -94,6 +106,8 @@ fi
 require_text "${report_file}" 'auditReportVersion !== 2'
 require_text "${report_file}" 'production.high > 0'
 require_text "${report_file}" 'all.critical > 0'
+require_text "${report_file}" 'DEPENDENCY_AUDIT_FAIL_ON_WARNING'
+require_text "${report_file}" 'shouldFailDependencyAudit'
 require_text "${report_file}" 'package.jsonとpackage-lock.jsonの整合性確認に失敗しました。'
 require_text "${report_file}" 'npm auditの結果を安全に検証できませんでした。'
 require_absent_text "${report_file}" 'node:child_process'
@@ -102,8 +116,10 @@ require_absent_text "${report_file}" 'spawn('
 
 require_text "${doc_file}" 'Dependabot'
 require_text "${doc_file}" 'Dependency Review'
+require_text "${doc_file}" 'Dependency Graph'
+require_text "${doc_file}" 'フォールバック'
 require_text "${doc_file}" 'npm audit'
 require_text "${doc_file}" '自動マージしません'
 require_text "${doc_file}" '`npm audit fix`を自動実行しません'
 
- echo "依存関係セキュリティ設定の静的検証に成功しました。"
+echo "依存関係セキュリティ設定の静的検証に成功しました。"
