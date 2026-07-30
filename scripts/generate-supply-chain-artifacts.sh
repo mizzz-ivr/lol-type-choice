@@ -36,6 +36,9 @@ fi
 install -m 0600 "${all_sbom}" "${output_dir}/sbom-all.cdx.json"
 install -m 0600 "${production_sbom}" "${output_dir}/sbom-production.cdx.json"
 
+node scripts/diagnose-sbom-refs.mjs "${output_dir}/sbom-all.cdx.json"
+node scripts/diagnose-sbom-refs.mjs "${output_dir}/sbom-production.cdx.json"
+
 SUPPLY_CHAIN_ALL_SBOM_PATH="${output_dir}/sbom-all.cdx.json" \
 SUPPLY_CHAIN_PRODUCTION_SBOM_PATH="${output_dir}/sbom-production.cdx.json" \
 SUPPLY_CHAIN_REPORT_PATH="${output_dir}/dependency-license-report.json" \
