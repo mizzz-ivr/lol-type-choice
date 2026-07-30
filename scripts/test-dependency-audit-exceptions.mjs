@@ -138,6 +138,33 @@ const noVulnerability = applyDependencyAuditExceptions({
 assert.equal(noVulnerability.status, "warning");
 assert.match(noVulnerability.checks.at(-1).message, /例外削除/);
 
+const reportValidationFailure = applyDependencyAuditExceptions({
+  report: {
+    ...baseReport(),
+    status: "critical",
+    summary: {
+      all: counts(),
+      production: counts(),
+      developmentOnly: counts()
+    },
+    vulnerablePackages: [],
+    checks: [
+      {
+        id: "report_validation",
+        label: "依存関係監査レポート",
+        status: "critical",
+        message: "package-lock.jsonの整合性確認に失敗しました。",
+        details: {}
+      }
+    ]
+  },
+  exceptionsConfig: exception(),
+  packageLock: packageLock(),
+  now: new Date("2026-07-30T00:00:00.000Z")
+});
+assert.equal(reportValidationFailure.status, "critical");
+assert.equal(reportValidationFailure.checks[0].status, "critical");
+
 assert.throws(
   () =>
     validateDependencyAuditExceptions({
