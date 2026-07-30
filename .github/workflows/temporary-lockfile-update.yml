@@ -15,7 +15,7 @@ concurrency:
 jobs:
   update-lockfile:
     name: package-lock.jsonを再生成
-    if: github.repository == 'mizzz-ivr/lol-type-choice' && github.actor == 'mizzz-ivr'
+    if: github.repository == 'mizzz-ivr/lol-type-choice' && github.ref == 'refs/heads/chore/dependency-security'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
