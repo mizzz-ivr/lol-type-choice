@@ -5,9 +5,12 @@ dependabot_file=".github/dependabot.yml"
 review_workflow=".github/workflows/dependency-review.yml"
 audit_workflow=".github/workflows/dependency-audit.yml"
 checks_workflow=".github/workflows/dependency-security-checks.yml"
+exceptions_config="config/dependency-audit-exceptions.json"
 report_file="scripts/dependency-audit-report.mjs"
+exceptions_file="scripts/dependency-audit-exceptions.mjs"
 fix_candidates_file="scripts/dependency-audit-fix-candidates.mjs"
 test_file="scripts/test-dependency-audit-report.mjs"
+exceptions_test_file="scripts/test-dependency-audit-exceptions.mjs"
 doc_file="docs/dependency-security.md"
 
 fail() {
@@ -20,16 +23,21 @@ for file in \
   "${review_workflow}" \
   "${audit_workflow}" \
   "${checks_workflow}" \
+  "${exceptions_config}" \
   "${report_file}" \
+  "${exceptions_file}" \
   "${fix_candidates_file}" \
   "${test_file}" \
+  "${exceptions_test_file}" \
   "${doc_file}"; do
   [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
 done
 
 node --check "${report_file}"
+node --check "${exceptions_file}"
 node --check "${fix_candidates_file}"
 node --check "${test_file}"
+node --check "${exceptions_test_file}"
 
 require_text() {
   local file=$1
@@ -107,10 +115,19 @@ if grep -Eq '^[[:space:]]+pull_request:' "${audit_workflow}"; then
   fail "Dependency Audit Workflowにpull_requestトリガーを追加しないでください。"
 fi
 
+require_text "${exceptions_config}" '"package": "next"'
+require_text "${exceptions_config}" '"severity": "high"'
+require_text "${exceptions_config}" '"scope": "production"'
+require_text "${exceptions_config}" '"installedVersion": "15.5.22"'
+require_text "${exceptions_config}" '"expiresOn": "2026-08-07"'
+require_absent_text "${exceptions_config}" '"package": "*"'
+
 require_text "${report_file}" 'auditReportVersion !== 2'
 require_text "${report_file}" 'production.high > 0'
 require_text "${report_file}" 'all.critical > 0'
 require_text "${report_file}" 'DEPENDENCY_AUDIT_FAIL_ON_WARNING'
+require_text "${report_file}" 'DEPENDENCY_AUDIT_EXCEPTIONS_PATH'
+require_text "${report_file}" 'loadAndApplyDependencyAuditExceptions'
 require_text "${report_file}" 'shouldFailDependencyAudit'
 require_text "${report_file}" 'vulnerablePackages'
 require_text "${report_file}" 'PACKAGE_NAME_PATTERN'
@@ -120,16 +137,28 @@ require_absent_text "${report_file}" 'node:child_process'
 require_absent_text "${report_file}" 'exec('
 require_absent_text "${report_file}" 'spawn('
 
+require_text "${exceptions_file}" 'validateDependencyAuditExceptions'
+require_text "${exceptions_file}" 'installedVersionFor'
+require_text "${exceptions_file}" 'exception.expiresOn < today'
+require_text "${exceptions_file}" '依存関係監査例外が重複しています。'
+require_text "${exceptions_file}" 'acceptedExceptions'
+require_absent_text "${exceptions_file}" 'node:child_process'
+require_absent_text "${exceptions_file}" 'process.env.NPM_TOKEN'
+
 require_text "${fix_candidates_file}" 'extractFixCandidates'
 require_text "${fix_candidates_file}" 'PACKAGE_NAME_PATTERN'
 require_text "${fix_candidates_file}" 'fix.version'
 require_absent_text "${fix_candidates_file}" 'node:child_process'
 require_absent_text "${fix_candidates_file}" 'process.env.NPM_TOKEN'
 
+require_text "${checks_workflow}" 'node scripts/test-dependency-audit-exceptions.mjs'
+
 require_text "${doc_file}" 'Dependabot'
 require_text "${doc_file}" 'Dependency Review'
 require_text "${doc_file}" 'Dependency Graph'
 require_text "${doc_file}" 'フォールバック'
+require_text "${doc_file}" '期限付き例外'
+require_text "${doc_file}" '2026-08-07'
 require_text "${doc_file}" 'npm audit'
 require_text "${doc_file}" '自動マージしません'
 require_text "${doc_file}" '`npm audit fix`を自動実行しません'
