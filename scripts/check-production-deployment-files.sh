@@ -54,6 +54,11 @@ check_workflow() {
   require_text "${workflow_file}" 'PRODUCTION_SSH_KNOWN_HOSTS'
   require_text "${workflow_file}" 'git merge-base --is-ancestor'
   require_text "${workflow_file}" 'confirmationにはDEPLOYを入力してください'
+  require_text "${workflow_file}" 'npm run supply-chain'
+  require_text "${workflow_file}" 'cp -R supply-chain dist/supply-chain'
+  require_text "${workflow_file}" 'supply-chain.sha256'
+  require_text "${workflow_file}" 'supply-chain/sbom-production.cdx.json'
+  require_text "${workflow_file}" 'supply-chain/dependency-license-report.json'
   require_absent_text "${workflow_file}" 'ssh-keyscan'
 
   if grep -Eq '^[[:space:]]+push:' "${workflow_file}"; then
@@ -68,6 +73,15 @@ check_workflow() {
 
   if grep -Fq 'secrets.' <<<"${build_section}"; then
     fail "buildジョブから本番Secretを参照しないでください。"
+  fi
+
+  deploy_section="$(awk '
+    /^  deploy:$/ { in_deploy = 1 }
+    in_deploy { print }
+  ' "${workflow_file}")"
+
+  if grep -Fq 'dist/supply-chain' <<<"${deploy_section}"; then
+    fail "SBOM・ライセンスレポートをVPSへ転送しないでください。"
   fi
 
   echo "本番Workflowの安全条件検証に成功しました。"
