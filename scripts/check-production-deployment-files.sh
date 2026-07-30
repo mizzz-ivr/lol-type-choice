@@ -55,7 +55,7 @@ check_workflow() {
   require_text "${workflow_file}" 'git merge-base --is-ancestor'
   require_text "${workflow_file}" 'confirmationにはDEPLOYを入力してください'
   require_text "${workflow_file}" 'npm run supply-chain'
-  require_text "${workflow_file}" 'cp -R supply-chain dist/supply-chain'
+  require_text "${workflow_file}" 'dist/supply-chain/'
   require_text "${workflow_file}" 'supply-chain.sha256'
   require_text "${workflow_file}" 'supply-chain/sbom-production.cdx.json'
   require_text "${workflow_file}" 'supply-chain/dependency-license-report.json'
