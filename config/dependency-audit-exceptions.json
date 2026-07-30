@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "package": "next",
+      "severity": "high",
+      "scope": "production",
+      "installedVersion": "15.5.22",
+      "expiresOn": "2026-08-07",
+      "reason": "15系の最新セキュリティ修正版15.5.22を適用済みだが、npm auditはNext.js本体のhighを継続検知し、修正候補として互換性のない9.3.3へのダウングレードを提示するため。上流の安定版修正を短期間監視する。"
+    }
+  ]
+}
