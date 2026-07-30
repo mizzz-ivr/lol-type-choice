@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { loadAndApplyDependencyAuditExceptions } from "./dependency-audit-exceptions.mjs";
 
 const SEVERITIES = ["info", "low", "moderate", "high", "critical"];
 const SEVERITY_RANK = new Map(SEVERITIES.map((severity, index) => [severity, index]));
@@ -24,6 +25,7 @@ const makeFallbackReport = (message) => ({
     developmentOnly: emptyCounts()
   },
   vulnerablePackages: [],
+  acceptedExceptions: [],
   checks: [
     {
       id: "report_validation",
@@ -174,6 +176,7 @@ export const normalizeDependencyAuditReports = ({
       developmentOnly
     },
     vulnerablePackages,
+    acceptedExceptions: [],
     checks: [
       {
         id: "production_dependencies",
@@ -255,13 +258,22 @@ export const formatDependencyAuditMarkdown = (report, title = "依存関係監�
       "",
       "### 検知したパッケージ",
       "",
-      "| パッケージ | 重大度 | 区分 | 直接依存 | 修正版情報 | 影響範囲 |",
-      "|---|---|---|---|---|---|"
+      "| パッケージ | 重大度 | 区分 | 直接依存 | 修正版情報 | 影響範囲 | 例外期限 |",
+      "|---|---|---|---|---|---|---|"
     );
 
     for (const item of report.vulnerablePackages) {
       lines.push(
-        `| ${escapeMarkdown(item.name)} | ${escapeMarkdown(item.severity)} | ${item.scope === "production" ? "本番" : "開発"} | ${item.direct ? "はい" : "いいえ"} | ${item.fixAvailable ? "あり" : "なし"} | ${escapeMarkdown(item.affectedRange)} |`
+        `| ${escapeMarkdown(item.name)} | ${escapeMarkdown(item.severity)} | ${item.scope === "production" ? "本番" : "開発"} | ${item.direct ? "はい" : "いいえ"} | ${item.fixAvailable ? "あり" : "なし"} | ${escapeMarkdown(item.affectedRange)} | ${item.exception ? escapeMarkdown(item.exception.expiresOn) : "-"} |`
+      );
+    }
+  }
+
+  if (Array.isArray(report.acceptedExceptions) && report.acceptedExceptions.length > 0) {
+    lines.push("", "### 適用した期限付き例外", "");
+    for (const exception of report.acceptedExceptions) {
+      lines.push(
+        `- ${escapeMarkdown(exception.package)} ${escapeMarkdown(exception.installedVersion)} / ${escapeMarkdown(exception.severity)} / 期限 ${escapeMarkdown(exception.expiresOn)}: ${escapeMarkdown(exception.reason)}`
       );
     }
   }
@@ -279,13 +291,21 @@ const runCli = async () => {
   const outputPath = process.env.DEPENDENCY_AUDIT_REPORT_PATH || "dependency-audit-report.json";
   const markdownPath =
     process.env.DEPENDENCY_AUDIT_MARKDOWN_PATH || "dependency-audit-report.md";
+  const exceptionsPath =
+    process.env.DEPENDENCY_AUDIT_EXCEPTIONS_PATH || "config/dependency-audit-exceptions.json";
+  const packageLockPath = process.env.DEPENDENCY_PACKAGE_LOCK_PATH || "package-lock.json";
   const lockfileValid = process.env.DEPENDENCY_LOCKFILE_VALID !== "false";
   const failOnWarning = process.env.DEPENDENCY_AUDIT_FAIL_ON_WARNING !== "false";
 
-  const report = await loadAndNormalizeDependencyAudit({
+  let report = await loadAndNormalizeDependencyAudit({
     allReportPath,
     productionReportPath,
     lockfileValid
+  });
+  report = await loadAndApplyDependencyAuditExceptions({
+    report,
+    exceptionsPath,
+    packageLockPath
   });
   const markdown = formatDependencyAuditMarkdown(report);
 
