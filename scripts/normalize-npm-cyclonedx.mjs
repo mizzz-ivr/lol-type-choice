@@ -3,11 +3,22 @@ import { pathToFileURL } from "node:url";
 
 const MAX_ITEMS = 10000;
 const MAX_REF_LENGTH = 500;
+const PACKAGE_NAME_PATTERN = /^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
+const VERSION_PATTERN = /^[0-9A-Za-z.+_:-]+$/;
+const PROPERTY_NAME_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 
 const safeRef = (value) => {
   if (typeof value !== "string") return null;
   const normalized = value.replaceAll("\n", " ").replaceAll("\r", " ").trim();
   return normalized && normalized.length <= MAX_REF_LENGTH ? normalized : null;
+};
+
+const safeComponentLabel = (component) => {
+  const name = typeof component?.name === "string" ? component.name.trim() : "";
+  const version = typeof component?.version === "string" ? component.version.trim() : "";
+  return PACKAGE_NAME_PATTERN.test(name) && VERSION_PATTERN.test(version)
+    ? `${name}@${version}`
+    : "不明なコンポーネント";
 };
 
 const canonicalize = (value) => {
@@ -21,6 +32,25 @@ const canonicalize = (value) => {
 };
 
 const stableJson = (value) => JSON.stringify(canonicalize(value));
+
+const differingKeys = (left, right) =>
+  [...new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})])]
+    .filter((key) => stableJson(left?.[key]) !== stableJson(right?.[key]))
+    .filter((key) => PROPERTY_NAME_PATTERN.test(key))
+    .sort()
+    .slice(0, 20);
+
+const differingPropertyNames = (left, right) => {
+  const names = [];
+  for (const property of [
+    ...(Array.isArray(left?.properties) ? left.properties : []),
+    ...(Array.isArray(right?.properties) ? right.properties : [])
+  ]) {
+    const name = typeof property?.name === "string" ? property.name.trim() : "";
+    if (name && name.length <= 100 && PROPERTY_NAME_PATTERN.test(name)) names.push(name);
+  }
+  return [...new Set(names)].sort().slice(0, 20);
+};
 
 const deduplicateComponents = (components) => {
   if (!Array.isArray(components) || components.length === 0 || components.length > MAX_ITEMS) {
@@ -43,7 +73,11 @@ const deduplicateComponents = (components) => {
       continue;
     }
     if (stableJson(existing) !== stableJson(component)) {
-      throw new Error("同じbom-refを持つCycloneDXコンポーネントの内容が競合しています。");
+      const keys = differingKeys(existing, component);
+      const propertyNames = differingPropertyNames(existing, component);
+      throw new Error(
+        `同じbom-refを持つ${safeComponentLabel(component)}の内容が競合しています。差分項目: ${keys.join(", ") || "不明"}${propertyNames.length > 0 ? ` / プロパティ: ${propertyNames.join(", ")}` : ""}`
+      );
     }
     duplicates += 1;
   }
