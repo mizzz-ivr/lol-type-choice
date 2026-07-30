@@ -150,6 +150,8 @@ dependency-audit-report.md
 - 全依存関係の重大度別件数
 - 本番依存関係の重大度別件数
 - 開発依存関係のみの重大度別件数
+- パッケージ名、重大度、本番・開発区分、直接依存、修正版有無、影響範囲
+- 適用した期限付き例外と期限
 - 全体判定
 
 次の内容はIssue・Summary・Artifactへ保存しません。
@@ -190,7 +192,50 @@ npm run smoke:standalone
 - 既存のLint・Test・Build・standaloneスモークが成功するか
 - 本番デプロイと監視Workflowに影響がないか
 
-## 7. 自動化しないこと
+## 7. 期限付き例外
+
+例外設定:
+
+```text
+config/dependency-audit-exceptions.json
+```
+
+脆弱性を無期限に除外しません。例外は以下をすべて完全一致させた場合だけ適用します。
+
+- パッケージ名
+- 重大度
+- 本番・開発区分
+- package-lock.jsonの導入バージョン
+- 有効期限
+
+現在の例外:
+
+| パッケージ | バージョン | 重大度 | 区分 | 期限 |
+|---|---|---|---|---|
+| `next` | `15.5.22` | high | 本番 | **2026-08-07** |
+
+Next.js 15.5.22は15系のセキュリティ修正版を適用済みですが、npm auditはNext.js本体のhighを継続検知し、修正候補として互換性のない9.3.3へのダウングレードを提示するため、上流の安定版修正を短期間だけ待ちます。
+
+例外は次の場合に自動で無効になります。
+
+- 2026-08-07を過ぎた
+- Next.jsの導入バージョンが15.5.22から変わった
+- 検知した重大度または区分が変わった
+- 対象脆弱性が検出されなくなった
+
+期限切れ・導入バージョン不一致は重大判定です。脆弱性が解消して例外だけが残った場合は警告し、例外削除を要求します。
+
+2026-08-07までに次を確認します。
+
+1. Next.js 15系または移行可能な安定版に修正版が出ているか
+2. Dependabot PRまたは公式セキュリティ情報
+3. 更新後のLint・Test・Build・standaloneスモーク
+4. 修正済みなら例外設定を削除
+5. 修正版がない場合でも、理由・影響・新しい期限をレビューした別PRで更新
+
+ワイルドカード、重大度全体、期限なしの例外は禁止します。
+
+## 8. 自動化しないこと
 
 - Dependabot PRを自動マージしません
 - `npm audit fix`を自動実行しません
@@ -201,13 +246,14 @@ npm run smoke:standalone
 
 脆弱性修正であっても、既存機能への影響をCIとレビューで確認してからマージします。
 
-## 8. ローカル検証
+## 9. ローカル検証
 
 静的設定と判定ロジック:
 
 ```bash
 bash scripts/check-dependency-security-files.sh
 node scripts/test-dependency-audit-report.mjs
+node scripts/test-dependency-audit-exceptions.mjs
 ```
 
 実際のaudit:
@@ -228,7 +274,7 @@ node scripts/dependency-audit-report.mjs
 
 rawファイルはGitへ追加しないでください。
 
-## 9. 制約
+## 10. 制約
 
 - npm registryやGitHub Advisory Databaseへの到達性に依存する
 - advisory公開前の脆弱性は検知できない
