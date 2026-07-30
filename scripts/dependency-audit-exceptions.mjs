@@ -6,8 +6,15 @@ const VALID_SCOPES = new Set(["production", "development"]);
 const PACKAGE_NAME_PATTERN = /^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
 const VERSION_PATTERN = /^[0-9A-Za-z.+_-]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DEPENDENCY_CHECK_IDS = new Set([
+  "production_dependencies",
+  "development_dependencies",
+  "all_dependencies",
+  "dependency_exceptions"
+]);
 
-const cloneCounts = (counts) => Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, value]));
+const cloneCounts = (counts) =>
+  Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, value]));
 
 const recalculateTotal = (counts) => {
   counts.total = SEVERITIES.reduce((sum, severity) => sum + counts[severity], 0);
@@ -37,7 +44,9 @@ const statusFromSummary = (summary) => {
 };
 
 const statusForCounts = (counts, scope) => {
-  if (counts.critical > 0 || (scope === "production" && counts.high > 0)) return "critical";
+  if (counts.critical > 0 || (scope === "production" && counts.high > 0)) {
+    return "critical";
+  }
   if (counts.high > 0 || counts.moderate > 0) return "warning";
   return "healthy";
 };
@@ -136,6 +145,9 @@ export const applyDependencyAuditExceptions = ({
   const acceptedExceptions = [];
   const exceptionProblems = [];
   const today = now.toISOString().slice(0, 10);
+  const nonDependencyCritical = report.checks.some(
+    (check) => check.status === "critical" && !DEPENDENCY_CHECK_IDS.has(check.id)
+  );
 
   for (const exception of exceptions) {
     const installedVersion = installedVersionFor(packageLock, exception.package);
@@ -186,9 +198,15 @@ export const applyDependencyAuditExceptions = ({
   }
 
   let status = statusFromSummary(effectiveSummary);
-  if (exceptionProblems.some((problem) => problem.status === "critical")) {
+  if (
+    nonDependencyCritical ||
+    exceptionProblems.some((problem) => problem.status === "critical")
+  ) {
     status = "critical";
-  } else if (status === "healthy" && exceptionProblems.some((problem) => problem.status === "warning")) {
+  } else if (
+    status === "healthy" &&
+    exceptionProblems.some((problem) => problem.status === "warning")
+  ) {
     status = "warning";
   }
 
