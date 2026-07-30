@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+package_file="package.json"
 dependabot_file=".github/dependabot.yml"
 review_workflow=".github/workflows/dependency-review.yml"
 audit_workflow=".github/workflows/dependency-audit.yml"
@@ -19,6 +20,7 @@ fail() {
 }
 
 for file in \
+  "${package_file}" \
   "${dependabot_file}" \
   "${review_workflow}" \
   "${audit_workflow}" \
@@ -52,6 +54,14 @@ require_absent_text() {
     fail "${file} に禁止設定が含まれています: ${text}"
   fi
 }
+
+require_text "${package_file}" '"next": "15.5.22"'
+require_text "${package_file}" '"eslint-config-next": "15.5.22"'
+require_text "${package_file}" '"postcss": "8.5.23"'
+require_text "${package_file}" '"vitest": "3.2.7"'
+require_text "${package_file}" '"overrides": {'
+require_text "${package_file}" '"postcss": "$postcss"'
+require_text "${package_file}" '"sharp": "0.35.3"'
 
 require_text "${dependabot_file}" 'version: 2'
 require_text "${dependabot_file}" 'package-ecosystem: "npm"'
@@ -162,5 +172,8 @@ require_text "${doc_file}" '2026-08-07'
 require_text "${doc_file}" 'npm audit'
 require_text "${doc_file}" '自動マージしません'
 require_text "${doc_file}" '`npm audit fix`を自動実行しません'
+
+[[ ! -e .github/workflows/temporary-lockfile-update.yml ]] \
+  || fail "一時lockfile生成Workflowを最終差分へ残さないでください。"
 
 echo "依存関係セキュリティ設定の静的検証に成功しました。"
