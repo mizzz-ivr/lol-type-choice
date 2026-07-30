@@ -5,14 +5,16 @@ const component = ({
   name = "debug",
   version = "3.2.7",
   bomRef = `pkg:npm/${name}@${version}`,
-  license = "MIT"
+  license = "MIT",
+  properties
 } = {}) => ({
   type: "library",
   name,
   version,
   "bom-ref": bomRef,
   purl: `pkg:npm/${name}@${version}`,
-  licenses: [{ license: { id: license } }]
+  licenses: [{ license: { id: license } }],
+  ...(properties ? { properties } : {})
 });
 
 const dependency = ({ ref, dependsOn = [] }) => ({ ref, dependsOn });
@@ -42,6 +44,7 @@ assert.equal(normalized.sbom.components.length, 2);
 assert.equal(normalized.sbom.dependencies.length, 3);
 assert.equal(normalized.stats.removedDuplicateComponents, 1);
 assert.equal(normalized.stats.removedDuplicateDependencies, 1);
+assert.equal(normalized.stats.removedNpmPlacementProperties, 0);
 assert.deepEqual(
   normalized.sbom.dependencies.find((item) => item.ref === "app@1.0.0").dependsOn,
   ["pkg:npm/debug@3.2.7", "pkg:npm/semver@6.3.1"]
@@ -55,11 +58,38 @@ reorderedDependsOn.dependencies[2].dependsOn = [
 const reorderedResult = normalizeNpmCycloneDx(reorderedDependsOn);
 assert.equal(reorderedResult.stats.removedDuplicateDependencies, 1);
 
+const placementMetadata = structuredClone(input);
+placementMetadata.components[0].properties = [
+  { name: "cdx:npm:package:path", value: "node_modules/debug" },
+  { name: "cdx:npm:package:development", value: "false" },
+  { name: "retained:property", value: "same" }
+];
+placementMetadata.components[1].properties = [
+  { name: "cdx:npm:package:path", value: "node_modules/other/node_modules/debug" },
+  { name: "cdx:npm:package:development", value: "true" },
+  { name: "retained:property", value: "same" }
+];
+const placementResult = normalizeNpmCycloneDx(placementMetadata);
+assert.equal(placementResult.sbom.components.length, 2);
+assert.equal(placementResult.stats.removedDuplicateComponents, 1);
+assert.equal(placementResult.stats.removedNpmPlacementProperties, 4);
+assert.deepEqual(
+  placementResult.sbom.components.find((item) => item.name === "debug").properties,
+  [{ name: "retained:property", value: "same" }]
+);
+
 const conflictingComponent = structuredClone(input);
 conflictingComponent.components[1].licenses = [{ license: { id: "Apache-2.0" } }];
 assert.throws(
   () => normalizeNpmCycloneDx(conflictingComponent),
   /debug@3\.2\.7の内容が競合しています。差分項目: licenses/
+);
+
+const conflictingRetainedProperty = structuredClone(placementMetadata);
+conflictingRetainedProperty.components[1].properties[2].value = "different";
+assert.throws(
+  () => normalizeNpmCycloneDx(conflictingRetainedProperty),
+  /差分項目: properties.*retained:property/
 );
 
 const conflictingDependency = structuredClone(input);
