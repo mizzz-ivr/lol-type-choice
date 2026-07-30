@@ -41,6 +41,7 @@ deploy/
     ecosystem.production.cjs
     nginx.conf.template
 docs/
+  dependency-security.md
   deployment-github-actions.md
   deployment-rental-server.md
   deployment-sakura-vps.md
@@ -58,11 +59,13 @@ lib/
   validation.ts
 scripts/
   bootstrap-sakura-vps.sh
+  check-dependency-security-files.sh
   check-domain-security-files.sh
   check-production-deployment-files.sh
   check-production-monitoring-files.sh
   check-release-readiness-files.sh
   check-sakura-vps-files.sh
+  dependency-audit-report.mjs
   deploy-production-release.sh
   domain-security-check.mjs
   merge-domain-security-readiness.mjs
@@ -71,6 +74,7 @@ scripts/
   release-readiness.mjs
   smoke-standalone.mjs
   smoke-test.mjs
+  test-dependency-audit-report.mjs
   test-domain-security-check.mjs
   test-merge-domain-security-readiness.mjs
   test-production-health-check.mjs
@@ -125,6 +129,8 @@ node scripts/test-release-readiness.mjs
 bash scripts/check-domain-security-files.sh
 node scripts/test-domain-security-check.mjs
 node scripts/test-merge-domain-security-readiness.mjs
+bash scripts/check-dependency-security-files.sh
+node scripts/test-dependency-audit-report.mjs
 npm run lint
 npm run test
 npm run build
@@ -136,6 +142,8 @@ npm run smoke:standalone
 `main` 向けPull Requestと `main` へのpushでは、以下をGitHub Actionsで分けて確認します。
 
 - `CI`: さくらのVPS設定・セキュリティヘッダー・Lint・Test・Build・standalone起動スモークテスト
+- `Dependency Review`: PRで追加・更新される依存関係のhigh以上の既知脆弱性
+- `Dependency Security Checks`: Dependabot・監査Workflowの安全条件とaudit判定ロジック
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 - `Release Readiness Checks`: リリース判定Workflowの最小権限・GO／NO-GO判定・Secret非出力
@@ -167,6 +175,8 @@ npm run smoke:standalone
 DNS解決、TLS証明書の信頼性、有効期限の事前警告は [本番ドメイン・TLS証明書監視](docs/domain-security-monitoring.md) を参照してください。
 
 HTTPセキュリティヘッダーの定義、CSPの制約、HSTSの運用は [HTTPセキュリティヘッダー運用](docs/security-headers.md) を参照してください。
+
+依存関係の週次更新、PR差分レビュー、定期脆弱性監査は [依存関係セキュリティ運用](docs/dependency-security.md) を参照してください。
 
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
@@ -258,6 +268,21 @@ TLS_WARNING_DAYS=30 \
 TLS_CRITICAL_DAYS=14 \
 node scripts/domain-security-check.mjs
 ```
+
+### 依存関係セキュリティ
+
+`.github/dependabot.yml`でnpmとGitHub Actionsの更新を週次確認し、minor・patch更新をグループ化します。
+
+`main`向けPRではDependency Reviewがhigh以上の新規脆弱性を確認します。既存依存関係は`.github/workflows/dependency-audit.yml`が週次監査し、警告・重大時は固定タイトルのIssueへ結果を集約します。
+
+ローカルで判定ロジックを確認できます。
+
+```bash
+bash scripts/check-dependency-security-files.sh
+node scripts/test-dependency-audit-report.mjs
+```
+
+Dependabot PRは自動マージせず、`npm audit fix`も自動実行しません。
 
 ## ヘルスチェック
 
