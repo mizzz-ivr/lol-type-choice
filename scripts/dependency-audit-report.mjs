@@ -198,6 +198,9 @@ export const formatDependencyAuditMarkdown = (report, title = "依存関係監�
   return `${lines.join("\n")}\n`;
 };
 
+export const shouldFailDependencyAudit = (report, { failOnWarning = true } = {}) =>
+  report.status === "critical" || (failOnWarning && report.status === "warning");
+
 const runCli = async () => {
   const allReportPath = process.env.DEPENDENCY_AUDIT_ALL_PATH || "dependency-audit-all.raw.json";
   const productionReportPath =
@@ -206,6 +209,7 @@ const runCli = async () => {
   const markdownPath =
     process.env.DEPENDENCY_AUDIT_MARKDOWN_PATH || "dependency-audit-report.md";
   const lockfileValid = process.env.DEPENDENCY_LOCKFILE_VALID !== "false";
+  const failOnWarning = process.env.DEPENDENCY_AUDIT_FAIL_ON_WARNING !== "false";
 
   const report = await loadAndNormalizeDependencyAudit({
     allReportPath,
@@ -218,7 +222,7 @@ const runCli = async () => {
   await writeFile(markdownPath, markdown, { mode: 0o600 });
   process.stdout.write(markdown);
 
-  if (report.status !== "healthy") {
+  if (shouldFailDependencyAudit(report, { failOnWarning })) {
     process.exitCode = 1;
   }
 };
