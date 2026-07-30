@@ -103,6 +103,9 @@ jobs:
       - name: Standaloneスモークテスト
         run: npm run smoke:standalone
 
+      - name: 本番SBOMと依存ライセンス棚卸しを生成
+        run: npm run supply-chain
+
       - name: リリース成果物を作成
         shell: bash
         run: |
@@ -111,15 +114,25 @@ jobs:
           release_name="release-${DEPLOY_SHA}.tar.gz"
           mkdir -p \
             ".next/standalone/deploy/sakura-vps" \
-            "dist"
+            "dist/supply-chain"
           cp deploy/sakura-vps/ecosystem.production.cjs \
             .next/standalone/deploy/sakura-vps/ecosystem.production.cjs
           tar -C .next/standalone -czf "dist/${release_name}" .
+          cp scripts/deploy-production-release.sh dist/deploy-production-release.sh
+          cp \
+            supply-chain/sbom-production.cdx.json \
+            supply-chain/dependency-license-report.json \
+            supply-chain/dependency-license-report.md \
+            dist/supply-chain/
           (
             cd dist
             sha256sum "${release_name}" >"${release_name}.sha256"
+            sha256sum \
+              supply-chain/sbom-production.cdx.json \
+              supply-chain/dependency-license-report.json \
+              supply-chain/dependency-license-report.md \
+              > supply-chain.sha256
           )
-          cp scripts/deploy-production-release.sh dist/deploy-production-release.sh
 
       - name: リリース成果物を保存
         uses: actions/upload-artifact@v4
