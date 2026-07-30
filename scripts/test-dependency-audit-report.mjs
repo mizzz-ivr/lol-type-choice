@@ -18,9 +18,9 @@ const counts = ({ info = 0, low = 0, moderate = 0, high = 0, critical = 0 } = {}
   total: info + low + moderate + high + critical
 });
 
-const audit = (vulnerabilities = {}) => ({
+const audit = (vulnerabilities = {}, packages = {}) => ({
   auditReportVersion: 2,
-  vulnerabilities: {},
+  vulnerabilities: packages,
   metadata: {
     vulnerabilities: counts(vulnerabilities),
     dependencies: {
@@ -34,6 +34,17 @@ const audit = (vulnerabilities = {}) => ({
   }
 });
 
+const vulnerability = ({ severity, direct = false, range = "<1.0.0", fixAvailable = true }) => ({
+  name: "ignored",
+  severity,
+  isDirect: direct,
+  via: [],
+  effects: [],
+  range,
+  nodes: [],
+  fixAvailable
+});
+
 const healthy = normalizeDependencyAuditReports({
   allReport: audit({ low: 2 }),
   productionReport: audit({ low: 1 }),
@@ -44,39 +55,73 @@ assert.equal(healthy.summary.developmentOnly.low, 1);
 assert.equal(shouldFailDependencyAudit(healthy), false);
 
 const developmentHigh = normalizeDependencyAuditReports({
-  allReport: audit({ high: 1 }),
+  allReport: audit(
+    { high: 1 },
+    { "dev-package": vulnerability({ severity: "high", direct: true }) }
+  ),
   productionReport: audit(),
   generatedAt: "2026-07-30T00:00:00.000Z"
 });
 assert.equal(developmentHigh.status, "warning");
 assert.equal(developmentHigh.checks[1].status, "warning");
+assert.equal(developmentHigh.vulnerablePackages[0].scope, "development");
 assert.equal(shouldFailDependencyAudit(developmentHigh), true);
 assert.equal(shouldFailDependencyAudit(developmentHigh, { failOnWarning: false }), false);
 
 const productionModerate = normalizeDependencyAuditReports({
-  allReport: audit({ moderate: 1 }),
-  productionReport: audit({ moderate: 1 }),
+  allReport: audit(
+    { moderate: 1 },
+    { "prod-package": vulnerability({ severity: "moderate", range: ">=1 <2" }) }
+  ),
+  productionReport: audit(
+    { moderate: 1 },
+    { "prod-package": vulnerability({ severity: "moderate", range: ">=1 <2" }) }
+  ),
   generatedAt: "2026-07-30T00:00:00.000Z"
 });
 assert.equal(productionModerate.status, "warning");
 assert.equal(productionModerate.checks[0].status, "warning");
+assert.equal(productionModerate.vulnerablePackages[0].scope, "production");
 
 const productionHigh = normalizeDependencyAuditReports({
-  allReport: audit({ high: 1 }),
-  productionReport: audit({ high: 1 }),
+  allReport: audit(
+    { high: 1 },
+    { next: vulnerability({ severity: "high", direct: true, range: ">=15 <15.4" }) }
+  ),
+  productionReport: audit(
+    { high: 1 },
+    { next: vulnerability({ severity: "high", direct: true, range: ">=15 <15.4" }) }
+  ),
   generatedAt: "2026-07-30T00:00:00.000Z"
 });
 assert.equal(productionHigh.status, "critical");
 assert.equal(productionHigh.checks[0].status, "critical");
+assert.equal(productionHigh.vulnerablePackages[0].name, "next");
+assert.equal(productionHigh.vulnerablePackages[0].direct, true);
+assert.equal(productionHigh.vulnerablePackages[0].fixAvailable, true);
 assert.equal(shouldFailDependencyAudit(productionHigh, { failOnWarning: false }), true);
 
 const developmentCritical = normalizeDependencyAuditReports({
-  allReport: audit({ critical: 1 }),
+  allReport: audit(
+    { critical: 1 },
+    { "build-tool": vulnerability({ severity: "critical", fixAvailable: false }) }
+  ),
   productionReport: audit(),
   generatedAt: "2026-07-30T00:00:00.000Z"
 });
 assert.equal(developmentCritical.status, "critical");
 assert.equal(developmentCritical.checks[1].status, "critical");
+assert.equal(developmentCritical.vulnerablePackages[0].fixAvailable, false);
+
+const unsafePackageName = normalizeDependencyAuditReports({
+  allReport: audit(
+    { high: 1 },
+    { "bad|name\nsecret": vulnerability({ severity: "high" }) }
+  ),
+  productionReport: audit(),
+  generatedAt: "2026-07-30T00:00:00.000Z"
+});
+assert.equal(unsafePackageName.vulnerablePackages.length, 0);
 
 assert.throws(
   () =>
@@ -125,6 +170,7 @@ assert.match(lockfileFailure.checks[0].message, /package-lock/);
 const markdown = formatDependencyAuditMarkdown(productionHigh);
 assert.match(markdown, /判定: \*\*重大\*\*/);
 assert.match(markdown, /本番依存関係/);
+assert.match(markdown, /\| next \| high \| 本番 \| はい \| あり \|/);
 assert.equal(markdown.includes("undefined"), false);
 
 console.log("依存関係監査レポートの正常・警告・重大・不正系テストに成功しました。");
