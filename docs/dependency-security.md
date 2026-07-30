@@ -69,7 +69,30 @@ Workflow:
 - Secretを参照しない
 - PRへの自動コメントや書き込みは行わない
 
-Dependency Reviewは公開リポジトリで利用できます。
+### Dependency Graphが有効な場合
+
+GitHubのSBOM APIを事前確認し、利用可能であれば公式の`actions/dependency-review-action@v4`を実行します。
+
+この経路では、PRが追加・更新する依存関係差分にhigh以上の既知脆弱性があれば失敗します。
+
+### Dependency Graphが未設定または利用できない場合
+
+公式Dependency Reviewを無条件に失敗させず、次のフォールバックへ切り替えます。
+
+1. `npm ci --ignore-scripts --no-audit --no-fund`
+2. 全依存関係の`npm audit --json`
+3. 本番依存関係の`npm audit --omit=dev --json`
+4. 定期監査と同じ正規化ロジックで判定
+
+フォールバックでは、以下をPRブロック条件とします。
+
+- 本番依存関係にhighまたはcriticalがある
+- 全依存関係にcriticalがある
+- lockfile整合性またはauditレポート検証に失敗する
+
+moderateと開発依存関係のhighはSummaryへ警告として表示しますが、フォールバックではPRを停止しません。Dependency Graphを有効化すると、Workflow変更なしで公式Dependency Reviewへ自動移行します。
+
+フォールバックは既存依存関係全体を監査するため、公式Dependency Reviewの「PR差分だけを確認する」挙動とは異なります。恒久運用ではDependency Graphを有効にしてください。
 
 ## 3. 定期npm audit
 
@@ -79,7 +102,7 @@ Workflow:
 .github/workflows/dependency-audit.yml
 ```
 
-毎週月曜日9:17（Asia/Tokyo相当）と手動実行で確認します。
+毎週月曜日9:17（Asia/Tokyo）と手動実行で確認します。
 
 ### 実行順序
 
@@ -196,6 +219,13 @@ npm audit --omit=dev --json > dependency-audit-production.raw.json || true
 node scripts/dependency-audit-report.mjs
 ```
 
+PRフォールバックと同じ重大のみ停止する場合:
+
+```bash
+DEPENDENCY_AUDIT_FAIL_ON_WARNING=false \
+node scripts/dependency-audit-report.mjs
+```
+
 rawファイルはGitへ追加しないでください。
 
 ## 9. 制約
@@ -204,6 +234,7 @@ rawファイルはGitへ追加しないでください。
 - advisory公開前の脆弱性は検知できない
 - `npm audit`の重大度はadvisory提供元の評価に依存する
 - Dependency ReviewはPRで導入する差分を対象とし、既存依存関係の監査は定期`npm audit`が担当する
+- Dependency Graph未設定時のフォールバックはPR差分ではなく現在の依存関係全体を対象とする
 - 自動修正ではないため、検知後の修正PRとレビューが必要
 
 ## 参考
