@@ -49,6 +49,7 @@ docs/
   production-monitoring.md
   release-readiness.md
   security-headers.md
+  supply-chain-inventory.md
 lib/
   analytics.ts
   resultQuery.ts
@@ -65,21 +66,25 @@ scripts/
   check-production-monitoring-files.sh
   check-release-readiness-files.sh
   check-sakura-vps-files.sh
+  check-supply-chain-files.sh
   dependency-audit-report.mjs
   deploy-production-release.sh
   domain-security-check.mjs
+  generate-supply-chain-artifacts.sh
   merge-domain-security-readiness.mjs
   prepare-standalone.mjs
   production-health-check.mjs
   release-readiness.mjs
   smoke-standalone.mjs
   smoke-test.mjs
+  supply-chain-report.mjs
   test-dependency-audit-report.mjs
   test-domain-security-check.mjs
   test-merge-domain-security-readiness.mjs
   test-production-health-check.mjs
   test-production-release.sh
   test-release-readiness.mjs
+  test-supply-chain-report.mjs
 tests/
   health.test.ts
   scoring.test.ts
@@ -131,10 +136,13 @@ node scripts/test-domain-security-check.mjs
 node scripts/test-merge-domain-security-readiness.mjs
 bash scripts/check-dependency-security-files.sh
 node scripts/test-dependency-audit-report.mjs
+bash scripts/check-supply-chain-files.sh
+node scripts/test-supply-chain-report.mjs
 npm run lint
 npm run test
 npm run build
 npm run smoke:standalone
+npm run supply-chain
 ```
 
 `npm run build` はNext.jsのstandalone成果物を生成し、`public` と `.next/static` を実行ディレクトリへ配置します。
@@ -144,6 +152,7 @@ npm run smoke:standalone
 - `CI`: さくらのVPS設定・セキュリティヘッダー・Lint・Test・Build・standalone起動スモークテスト
 - `Dependency Review`: PRで追加・更新される依存関係のhigh以上の既知脆弱性
 - `Dependency Security Checks`: Dependabot・監査Workflowの安全条件とaudit判定ロジック
+- `Supply Chain Inventory`: 全依存・本番依存のCycloneDX SBOM、ライセンス棚卸し、SHA-256
 - `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 - `Release Readiness Checks`: リリース判定Workflowの最小権限・GO／NO-GO判定・Secret非出力
@@ -178,6 +187,8 @@ HTTPセキュリティヘッダーの定義、CSPの制約、HSTSの運用は [H
 
 依存関係の週次更新、PR差分レビュー、定期脆弱性監査は [依存関係セキュリティ運用](docs/dependency-security.md) を参照してください。
 
+全依存・本番依存のSBOM、ライセンス情報、デプロイ成果物との対応付けは [SBOM・依存ライセンス棚卸し運用](docs/supply-chain-inventory.md) を参照してください。
+
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
 ### 基本的な本番ビルド
@@ -189,6 +200,7 @@ npm run lint
 npm run test
 npm run build
 npm run smoke:standalone
+npm run supply-chain
 npm run start
 ```
 
@@ -228,6 +240,8 @@ TLS証明書は残日数15〜30日を警告、14日以下を重大として扱�
 - `production` Environmentの接続設定・Secretが登録済み
 
 デプロイ先では`releases/<SHA>`へ配置し、`current`シンボリックリンクを切り替えます。PM2再読込または内部ヘルスチェックに失敗した場合、直前リリースへ自動で戻します。
+
+デプロイArtifactには同一コミットから生成した本番SBOM・ライセンスレポート・SHA-256一覧を含めます。これらはVPSへ転送せず、GitHub Actions上のデプロイ証跡として保存します。
 
 ### 本番外形監視
 
@@ -283,6 +297,20 @@ node scripts/test-dependency-audit-report.mjs
 ```
 
 Dependabot PRは自動マージせず、`npm audit fix`も自動実行しません。
+
+### SBOM・依存ライセンス棚卸し
+
+`.github/workflows/supply-chain-inventory.yml`は、`main`向けPRと`main`へのpushで全依存関係・本番依存関係のCycloneDX SBOMを生成します。
+
+ライセンス情報がない依存、SPDX IDではなく名称だけの表記、複合式、PURL欠落、複数バージョンをレビュー対象として可視化します。ライセンスの許可・拒否は自動判定しません。
+
+```bash
+bash scripts/check-supply-chain-files.sh
+node scripts/test-supply-chain-report.mjs
+npm ci --ignore-scripts --no-audit --no-fund
+npm run supply-chain
+sha256sum --check supply-chain/supply-chain.sha256
+```
 
 ## ヘルスチェック
 
