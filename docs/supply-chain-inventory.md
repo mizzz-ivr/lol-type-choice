@@ -33,12 +33,27 @@ scripts/generate-supply-chain-artifacts.sh
 supply-chain/
 ```
 
+## npm生成SBOMの正規化
+
+npm 10.9.8の`npm sbom`は、依存ツリー内に同一パッケージ・同一バージョンが複数配置されている場合、完全一致するコンポーネントを同じ`bom-ref`で複数出力することがあります。依存関係の`ref`も同じ内容で重複する場合があります。
+
+そのままではCycloneDX参照を一意に検証できないため、`scripts/normalize-npm-cyclonedx.mjs`で次の条件を満たす重複だけを統合します。
+
+- `bom-ref`が同じ
+- コンポーネント全体をキー順に正規化したJSONが完全一致する
+- 依存関係の`ref`が同じ
+- `dependsOn`を重複除去・ソートした内容が完全一致する
+
+名前、バージョン、PURL、ライセンス、外部参照、依存先などが少しでも異なる重複は統合せず、内容競合としてCIを失敗させます。
+
+正規化後のSBOMに重複した`bom-ref`または`ref`が残っている場合も、後段の検証で失敗します。正規化時に削除した重複件数だけをログへ出し、元SBOMの任意文字列は診断ログへ出しません。
+
 ## 生成物
 
 | ファイル | 内容 |
 |---|---|
-| `sbom-all.cdx.json` | 開発依存を含むCycloneDX SBOM |
-| `sbom-production.cdx.json` | `--omit=dev`を適用した本番依存関係SBOM |
+| `sbom-all.cdx.json` | 開発依存を含む正規化済みCycloneDX SBOM |
+| `sbom-production.cdx.json` | `--omit=dev`を適用した正規化済み本番依存関係SBOM |
 | `dependency-license-report.json` | 機械処理用の正規化レポート |
 | `dependency-license-report.md` | GitHub Actions Summary・レビュー用の集計 |
 | `supply-chain.sha256` | 上記4ファイルのSHA-256 |
@@ -56,13 +71,14 @@ Workflow:
 `main`向けPull Requestと`main`へのpushで次を実行します。
 
 1. 静的安全性チェック
-2. レポート生成ロジックの正常・警告・異常系テスト
-3. `npm ci --ignore-scripts`
-4. 全依存関係SBOM生成
-5. 本番依存関係SBOM生成
-6. SBOM検証とライセンスレポート生成
-7. MarkdownをGitHub Actions Summaryへ追加
-8. 生成物を14日間Artifactとして保存
+2. npm生成SBOMの完全一致重複正規化テスト
+3. レポート生成ロジックの正常・警告・異常系テスト
+4. `npm ci --ignore-scripts`
+5. 全依存関係SBOM生成・正規化
+6. 本番依存関係SBOM生成・正規化
+7. SBOM検証とライセンスレポート生成
+8. MarkdownをGitHub Actions Summaryへ追加
+9. 生成物を14日間Artifactとして保存
 
 Workflowは`contents: read`のみを使用します。Secret、SSH、SCP、VPS、本番Environmentにはアクセスしません。
 
@@ -89,7 +105,9 @@ SBOMとライセンスレポートはVPSへ転送せず、GitHub Actionsのデ�
 - 対応外の仕様バージョン
 - ルートコンポーネントがない
 - コンポーネントが空または上限を超える
-- `bom-ref`がない、または重複している
+- 同じ`bom-ref`を持つコンポーネントの内容が競合する
+- 同じ`ref`を持つ依存関係の`dependsOn`が競合する
+- 正規化後に`bom-ref`または依存関係`ref`が重複している
 - 依存関係の`ref`・`dependsOn`が存在しないコンポーネントを参照する
 - ルート依存関係がない
 - package.jsonの直接本番依存が本番SBOMに存在しない
@@ -116,6 +134,7 @@ SBOMとライセンスレポートはVPSへ転送せず、GitHub Actionsのデ�
 - npm 10標準の`npm sbom`を使用する
 - PR用生成経路ではinstall scriptを実行しない
 - 一時ファイルを`mktemp`配下へ作り、終了時に削除する
+- 完全一致する重複だけを正規化し、内容競合を拒否する
 - 出力ファイルを0600、生成時のumaskを077にする
 - npmの標準エラー全文をArtifactへ保存しない
 - レポートへ環境変数や認証情報を含めない
@@ -130,6 +149,7 @@ SBOMとライセンスレポートはVPSへ転送せず、GitHub Actionsのデ�
 
 ```bash
 bash scripts/check-supply-chain-files.sh
+node scripts/test-normalize-npm-cyclonedx.mjs
 node scripts/test-supply-chain-report.mjs
 npm ci --ignore-scripts --no-audit --no-fund
 npm run supply-chain
@@ -145,6 +165,7 @@ sha256sum --check supply-chain.sha256
 
 ## レビュー観点
 
+- 正規化された重複件数が急増していないか
 - 本番コンポーネント数が不自然に増減していないか
 - 新しい直接依存が追加されていないか
 - `UNKNOWN`ライセンスが増えていないか
