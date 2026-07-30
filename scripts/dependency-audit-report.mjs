@@ -2,6 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const SEVERITIES = ["info", "low", "moderate", "high", "critical"];
+const SEVERITY_RANK = new Map(SEVERITIES.map((severity, index) => [severity, index]));
+const PACKAGE_NAME_PATTERN = /^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
 
 const emptyCounts = () => ({
   info: 0,
@@ -21,6 +23,7 @@ const makeFallbackReport = (message) => ({
     production: emptyCounts(),
     developmentOnly: emptyCounts()
   },
+  vulnerablePackages: [],
   checks: [
     {
       id: "report_validation",
@@ -54,6 +57,42 @@ const validateCounts = (value, label) => {
   return counts;
 };
 
+const normalizeRange = (value) => {
+  if (typeof value !== "string") return "-";
+  const normalized = value.replaceAll("\n", " ").trim();
+  return normalized === "" ? "-" : normalized.slice(0, 120);
+};
+
+const normalizeVulnerablePackages = (input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+
+  return Object.entries(input)
+    .slice(0, 100)
+    .flatMap(([key, vulnerability]) => {
+      if (!PACKAGE_NAME_PATTERN.test(key)) return [];
+      if (!vulnerability || typeof vulnerability !== "object" || Array.isArray(vulnerability)) {
+        return [];
+      }
+      if (!SEVERITY_RANK.has(vulnerability.severity)) return [];
+
+      return [
+        {
+          name: key,
+          severity: vulnerability.severity,
+          direct: vulnerability.isDirect === true,
+          affectedRange: normalizeRange(vulnerability.range),
+          fixAvailable: vulnerability.fixAvailable !== false && vulnerability.fixAvailable != null
+        }
+      ];
+    })
+    .sort((left, right) => {
+      const severityDifference =
+        SEVERITY_RANK.get(right.severity) - SEVERITY_RANK.get(left.severity);
+      return severityDifference !== 0 ? severityDifference : left.name.localeCompare(right.name);
+    })
+    .slice(0, 50);
+};
+
 export const validateNpmAuditReport = (input, label) => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error(`${label}がJSONオブジェクトではありません。`);
@@ -62,7 +101,10 @@ export const validateNpmAuditReport = (input, label) => {
     throw new Error(`${label}のauditReportVersionが未対応です。`);
   }
 
-  return validateCounts(input.metadata?.vulnerabilities, label);
+  return {
+    counts: validateCounts(input.metadata?.vulnerabilities, label),
+    packages: normalizeVulnerablePackages(input.vulnerabilities)
+  };
 };
 
 const subtractCounts = (all, production) => {
@@ -87,15 +129,27 @@ const statusFor = ({ all, production }) => {
 const countMessage = (counts) =>
   `critical ${counts.critical}件 / high ${counts.high}件 / moderate ${counts.moderate}件 / low ${counts.low}件`;
 
+const mergePackageScopes = (allPackages, productionPackages) => {
+  const productionNames = new Set(productionPackages.map((item) => item.name));
+
+  return allPackages.map((item) => ({
+    ...item,
+    scope: productionNames.has(item.name) ? "production" : "development"
+  }));
+};
+
 export const normalizeDependencyAuditReports = ({
   allReport,
   productionReport,
   generatedAt = new Date().toISOString()
 }) => {
-  const all = validateNpmAuditReport(allReport, "全依存関係監査");
-  const production = validateNpmAuditReport(productionReport, "本番依存関係監査");
+  const allResult = validateNpmAuditReport(allReport, "全依存関係監査");
+  const productionResult = validateNpmAuditReport(productionReport, "本番依存関係監査");
+  const all = allResult.counts;
+  const production = productionResult.counts;
   const developmentOnly = subtractCounts(all, production);
   const status = statusFor({ all, production });
+  const vulnerablePackages = mergePackageScopes(allResult.packages, productionResult.packages);
 
   const productionStatus =
     production.high > 0 || production.critical > 0
@@ -119,6 +173,7 @@ export const normalizeDependencyAuditReports = ({
       production,
       developmentOnly
     },
+    vulnerablePackages,
     checks: [
       {
         id: "production_dependencies",
@@ -193,6 +248,22 @@ export const formatDependencyAuditMarkdown = (report, title = "依存関係監�
   for (const check of report.checks) {
     const result = check.status === "healthy" ? "PASS" : check.status === "warning" ? "WARN" : "FAIL";
     lines.push(`| ${escapeMarkdown(check.label)} | ${result} | ${escapeMarkdown(check.message)} |`);
+  }
+
+  if (Array.isArray(report.vulnerablePackages) && report.vulnerablePackages.length > 0) {
+    lines.push(
+      "",
+      "### 検知したパッケージ",
+      "",
+      "| パッケージ | 重大度 | 区分 | 直接依存 | 修正版情報 | 影響範囲 |",
+      "|---|---|---|---|---|---|"
+    );
+
+    for (const item of report.vulnerablePackages) {
+      lines.push(
+        `| ${escapeMarkdown(item.name)} | ${escapeMarkdown(item.severity)} | ${item.scope === "production" ? "本番" : "開発"} | ${item.direct ? "はい" : "いいえ"} | ${item.fixAvailable ? "あり" : "なし"} | ${escapeMarkdown(item.affectedRange)} |`
+      );
+    }
   }
 
   return `${lines.join("\n")}\n`;
