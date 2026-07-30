@@ -59,7 +59,7 @@ const conflictingComponent = structuredClone(input);
 conflictingComponent.components[1].licenses = [{ license: { id: "Apache-2.0" } }];
 assert.throws(
   () => normalizeNpmCycloneDx(conflictingComponent),
-  /コンポーネントの内容が競合/
+  /debug@3\.2\.7の内容が競合しています。差分項目: licenses/
 );
 
 const conflictingDependency = structuredClone(input);
