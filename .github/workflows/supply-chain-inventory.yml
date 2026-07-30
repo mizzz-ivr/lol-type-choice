@@ -37,6 +37,9 @@ jobs:
       - name: SBOM設定の静的安全性を検証
         run: bash scripts/check-supply-chain-files.sh
 
+      - name: npm生成SBOMの完全一致重複正規化を検証
+        run: node scripts/test-normalize-npm-cyclonedx.mjs
+
       - name: SBOMレポートの正常・警告・異常系を検証
         run: node scripts/test-supply-chain-report.mjs
 
