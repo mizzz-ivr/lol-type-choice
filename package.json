@@ -14,7 +14,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "smoke": "node scripts/smoke-test.mjs",
-    "smoke:standalone": "node scripts/smoke-standalone.mjs"
+    "smoke:standalone": "node scripts/smoke-standalone.mjs",
+    "supply-chain": "bash scripts/generate-supply-chain-artifacts.sh"
   },
   "dependencies": {
     "next": "15.5.22",
