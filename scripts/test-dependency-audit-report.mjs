@@ -5,7 +5,8 @@ import { join } from "node:path";
 import {
   formatDependencyAuditMarkdown,
   loadAndNormalizeDependencyAudit,
-  normalizeDependencyAuditReports
+  normalizeDependencyAuditReports,
+  shouldFailDependencyAudit
 } from "./dependency-audit-report.mjs";
 
 const counts = ({ info = 0, low = 0, moderate = 0, high = 0, critical = 0 } = {}) => ({
@@ -40,6 +41,7 @@ const healthy = normalizeDependencyAuditReports({
 });
 assert.equal(healthy.status, "healthy");
 assert.equal(healthy.summary.developmentOnly.low, 1);
+assert.equal(shouldFailDependencyAudit(healthy), false);
 
 const developmentHigh = normalizeDependencyAuditReports({
   allReport: audit({ high: 1 }),
@@ -48,6 +50,8 @@ const developmentHigh = normalizeDependencyAuditReports({
 });
 assert.equal(developmentHigh.status, "warning");
 assert.equal(developmentHigh.checks[1].status, "warning");
+assert.equal(shouldFailDependencyAudit(developmentHigh), true);
+assert.equal(shouldFailDependencyAudit(developmentHigh, { failOnWarning: false }), false);
 
 const productionModerate = normalizeDependencyAuditReports({
   allReport: audit({ moderate: 1 }),
@@ -64,6 +68,7 @@ const productionHigh = normalizeDependencyAuditReports({
 });
 assert.equal(productionHigh.status, "critical");
 assert.equal(productionHigh.checks[0].status, "critical");
+assert.equal(shouldFailDependencyAudit(productionHigh, { failOnWarning: false }), true);
 
 const developmentCritical = normalizeDependencyAuditReports({
   allReport: audit({ critical: 1 }),
