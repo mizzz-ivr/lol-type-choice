@@ -6,6 +6,7 @@ review_workflow=".github/workflows/dependency-review.yml"
 audit_workflow=".github/workflows/dependency-audit.yml"
 checks_workflow=".github/workflows/dependency-security-checks.yml"
 report_file="scripts/dependency-audit-report.mjs"
+fix_candidates_file="scripts/dependency-audit-fix-candidates.mjs"
 test_file="scripts/test-dependency-audit-report.mjs"
 doc_file="docs/dependency-security.md"
 
@@ -20,12 +21,14 @@ for file in \
   "${audit_workflow}" \
   "${checks_workflow}" \
   "${report_file}" \
+  "${fix_candidates_file}" \
   "${test_file}" \
   "${doc_file}"; do
   [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
 done
 
 node --check "${report_file}"
+node --check "${fix_candidates_file}"
 node --check "${test_file}"
 
 require_text() {
@@ -63,6 +66,7 @@ require_text "${review_workflow}" "steps.dependency_graph.outputs.enabled != 'tr
 require_text "${review_workflow}" 'npm ci --ignore-scripts --no-audit --no-fund'
 require_text "${review_workflow}" 'npm audit --json'
 require_text "${review_workflow}" 'npm audit --omit=dev --json'
+require_text "${review_workflow}" 'node scripts/dependency-audit-fix-candidates.mjs'
 require_text "${review_workflow}" 'DEPENDENCY_AUDIT_FAIL_ON_WARNING: "false"'
 require_text "${review_workflow}" 'node scripts/dependency-audit-report.mjs'
 require_text "${review_workflow}" 'persist-credentials: false'
@@ -108,11 +112,19 @@ require_text "${report_file}" 'production.high > 0'
 require_text "${report_file}" 'all.critical > 0'
 require_text "${report_file}" 'DEPENDENCY_AUDIT_FAIL_ON_WARNING'
 require_text "${report_file}" 'shouldFailDependencyAudit'
+require_text "${report_file}" 'vulnerablePackages'
+require_text "${report_file}" 'PACKAGE_NAME_PATTERN'
 require_text "${report_file}" 'package.jsonとpackage-lock.jsonの整合性確認に失敗しました。'
 require_text "${report_file}" 'npm auditの結果を安全に検証できませんでした。'
 require_absent_text "${report_file}" 'node:child_process'
 require_absent_text "${report_file}" 'exec('
 require_absent_text "${report_file}" 'spawn('
+
+require_text "${fix_candidates_file}" 'extractFixCandidates'
+require_text "${fix_candidates_file}" 'PACKAGE_NAME_PATTERN'
+require_text "${fix_candidates_file}" 'fix.version'
+require_absent_text "${fix_candidates_file}" 'node:child_process'
+require_absent_text "${fix_candidates_file}" 'process.env.NPM_TOKEN'
 
 require_text "${doc_file}" 'Dependabot'
 require_text "${doc_file}" 'Dependency Review'
