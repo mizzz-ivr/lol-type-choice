@@ -84,7 +84,7 @@ require_absent_text "${generator_file}" 'wget '
 require_absent_text "${generator_file}" 'diagnose-sbom-refs'
 
 require_text "${normalizer_file}" 'stableJson(existing) !== stableJson(component)'
-require_text "${normalizer_file}" 'コンポーネントの内容が競合しています'
+require_text "${normalizer_file}" 'の内容が競合しています。差分項目:'
 require_text "${normalizer_file}" '依存関係の内容が競合しています'
 require_text "${normalizer_file}" 'removedDuplicateComponents'
 require_text "${normalizer_file}" 'removedDuplicateDependencies'
