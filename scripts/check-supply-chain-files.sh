@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 workflow_file=".github/workflows/supply-chain-inventory.yml"
 generator_file="scripts/generate-supply-chain-artifacts.sh"
+normalizer_file="scripts/normalize-npm-cyclonedx.mjs"
+normalizer_test_file="scripts/test-normalize-npm-cyclonedx.mjs"
 report_file="scripts/supply-chain-report.mjs"
 test_file="scripts/test-supply-chain-report.mjs"
 doc_file="docs/supply-chain-inventory.md"
@@ -18,6 +20,8 @@ fail() {
 for file in \
   "${workflow_file}" \
   "${generator_file}" \
+  "${normalizer_file}" \
+  "${normalizer_test_file}" \
   "${report_file}" \
   "${test_file}" \
   "${doc_file}" \
@@ -28,6 +32,8 @@ for file in \
 done
 
 bash -n "${generator_file}"
+node --check "${normalizer_file}"
+node --check "${normalizer_test_file}"
 node --check "${report_file}"
 node --check "${test_file}"
 
@@ -49,6 +55,7 @@ require_text "${workflow_file}" 'pull_request:'
 require_text "${workflow_file}" 'push:'
 require_text "${workflow_file}" 'contents: read'
 require_text "${workflow_file}" 'persist-credentials: false'
+require_text "${workflow_file}" 'node scripts/test-normalize-npm-cyclonedx.mjs'
 require_text "${workflow_file}" 'npm ci --ignore-scripts --no-audit --no-fund'
 require_text "${workflow_file}" 'npm run supply-chain'
 require_text "${workflow_file}" 'actions/upload-artifact@v4'
@@ -67,12 +74,22 @@ require_text "${generator_file}" 'npm sbom'
 require_text "${generator_file}" '--sbom-format=cyclonedx'
 require_text "${generator_file}" '--sbom-type=application'
 require_text "${generator_file}" '--omit=dev'
+require_text "${generator_file}" 'node scripts/normalize-npm-cyclonedx.mjs'
 require_text "${generator_file}" 'sha256sum'
 require_text "${generator_file}" 'umask 077'
 require_absent_text "${generator_file}" 'npm install'
 require_absent_text "${generator_file}" 'npx '
 require_absent_text "${generator_file}" 'curl '
 require_absent_text "${generator_file}" 'wget '
+require_absent_text "${generator_file}" 'diagnose-sbom-refs'
+
+require_text "${normalizer_file}" 'stableJson(existing) !== stableJson(component)'
+require_text "${normalizer_file}" 'コンポーネントの内容が競合しています'
+require_text "${normalizer_file}" '依存関係の内容が競合しています'
+require_text "${normalizer_file}" 'removedDuplicateComponents'
+require_text "${normalizer_file}" 'removedDuplicateDependencies'
+require_absent_text "${normalizer_file}" 'node:child_process'
+require_absent_text "${normalizer_file}" 'process.env.NPM_TOKEN'
 
 require_text "${report_file}" 'input.bomFormat !== "CycloneDX"'
 require_text "${report_file}" '重複したbom-ref'
@@ -90,12 +107,16 @@ require_text "${deploy_check}" 'npm run supply-chain'
 require_text "${deploy_check}" 'supply-chain.sha256'
 
 require_text "${doc_file}" 'npm sbom'
+require_text "${doc_file}" '完全一致する重複'
 require_text "${doc_file}" 'CycloneDX'
 require_text "${doc_file}" '自動拒否しません'
 require_text "${doc_file}" 'Artifact Attestation'
 
 if [[ -e ".github/workflows/temporary-lockfile-update.yml" ]]; then
   fail "一時的なlockfile更新Workflowを残さないでください。"
+fi
+if [[ -e "scripts/diagnose-sbom-refs.mjs" ]]; then
+  fail "一時的なSBOM診断スクリプトを残さないでください。"
 fi
 
 if git ls-files --error-unmatch supply-chain >/dev/null 2>&1; then
