@@ -37,3 +37,6 @@ jobs:
 
       - name: npm auditレポートの正常・警告・重大系を検証
         run: node scripts/test-dependency-audit-report.mjs
+
+      - name: 期限付き監査例外の完全一致・期限切れを検証
+        run: node scripts/test-dependency-audit-exceptions.mjs
