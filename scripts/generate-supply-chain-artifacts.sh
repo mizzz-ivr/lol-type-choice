@@ -40,6 +40,12 @@ node scripts/normalize-npm-cyclonedx.mjs \
   "${production_sbom}" \
   "${output_dir}/sbom-production.cdx.json"
 
+checkout_commit_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+if [[ ! "${checkout_commit_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+  checkout_commit_sha="${GITHUB_SHA:-}"
+fi
+
+GITHUB_SHA="${checkout_commit_sha}" \
 SUPPLY_CHAIN_ALL_SBOM_PATH="${output_dir}/sbom-all.cdx.json" \
 SUPPLY_CHAIN_PRODUCTION_SBOM_PATH="${output_dir}/sbom-production.cdx.json" \
 SUPPLY_CHAIN_REPORT_PATH="${output_dir}/dependency-license-report.json" \
