@@ -1,0 +1,167 @@
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: "17 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm依存関係の定期監査
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPENDENCY_AUDIT_ALL_PATH: dependency-audit-all.raw.json
+      DEPENDENCY_AUDIT_PRODUCTION_PATH: dependency-audit-production.raw.json
+      DEPENDENCY_AUDIT_REPORT_PATH: dependency-audit-report.json
+      DEPENDENCY_AUDIT_MARKDOWN_PATH: dependency-audit-report.md
+      INCIDENT_TITLE: "[監視] 依存関係監査で脆弱性または異常を検知"
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: lockfile整合性をinstall scriptなしで確認
+        id: lockfile
+        continue-on-error: true
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: 全依存関係と本番依存関係を監査
+        if: steps.lockfile.outcome == 'success'
+        shell: bash
+        run: |
+          set -u
+
+          set +e
+          npm audit --json \
+            >"${DEPENDENCY_AUDIT_ALL_PATH}" \
+            2>dependency-audit-all.stderr.log
+          all_exit=$?
+
+          npm audit --omit=dev --json \
+            >"${DEPENDENCY_AUDIT_PRODUCTION_PATH}" \
+            2>dependency-audit-production.stderr.log
+          production_exit=$?
+          set -e
+
+          echo "全依存関係audit終了コード: ${all_exit}"
+          echo "本番依存関係audit終了コード: ${production_exit}"
+
+      - name: 監査結果を安全なレポートへ変換
+        id: normalize
+        if: always()
+        continue-on-error: true
+        env:
+          DEPENDENCY_LOCKFILE_VALID: ${{ steps.lockfile.outcome == 'success' }}
+        run: node scripts/dependency-audit-report.mjs
+
+      - name: 監査結果をサマリーへ追加
+        if: always() && hashFiles('dependency-audit-report.md') != ''
+        shell: bash
+        run: cat dependency-audit-report.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 正規化レポートを保存
+        if: always() && hashFiles('dependency-audit-report.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-report-${{ github.run_id }}
+          path: |
+            dependency-audit-report.json
+            dependency-audit-report.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 警告Issueを作成または更新
+        if: steps.normalize.outcome == 'failure'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          {
+            echo "## 依存関係監査で脆弱性または異常を検知"
+            echo
+            if [[ -f "${DEPENDENCY_AUDIT_MARKDOWN_PATH}" ]]; then
+              cat "${DEPENDENCY_AUDIT_MARKDOWN_PATH}"
+            else
+              echo "安全な監査レポートを生成できませんでした。"
+            fi
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+            echo "- 自動修正: 実施していません"
+            echo "- 確認事項: Dependabot PR、npm advisory、package-lock.json、直近の依存更新を確認してください。"
+          } >incident.md
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" --body-file incident.md
+            echo "既存の依存関係Issue #${issue_number}へ監査結果を追記しました。" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            issue_url="$(gh issue create --title "${INCIDENT_TITLE}" --body-file incident.md)"
+            echo "依存関係Issueを作成しました: ${issue_url}" >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: 復旧Issueをクローズ
+        if: steps.normalize.outcome == 'success'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "\"${INCIDENT_TITLE}\" in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"${INCIDENT_TITLE}\") | .number" \
+              | head -n 1
+          )"
+
+          if [[ -z "${issue_number}" ]]; then
+            echo "クローズ対象の依存関係Issueはありません。" >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          {
+            echo "## 依存関係監査の正常化を確認"
+            echo
+            cat "${DEPENDENCY_AUDIT_MARKDOWN_PATH}"
+            echo
+            echo "- GitHub Actions: ${RUN_URL}"
+          } >recovery.md
+
+          gh issue comment "${issue_number}" --body-file recovery.md
+          gh issue close "${issue_number}" --reason completed
+          echo "依存関係Issue #${issue_number}を正常化済みとしてクローズしました。" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: 警告または重大時はWorkflowを失敗として終了
+        if: steps.normalize.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "依存関係監査で警告または重大判定になりました。" >&2
+          exit 1

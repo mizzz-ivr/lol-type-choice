@@ -1,0 +1,105 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: 依存関係差分レビュー
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPENDENCY_AUDIT_ALL_PATH: dependency-review-all.raw.json
+      DEPENDENCY_AUDIT_PRODUCTION_PATH: dependency-review-production.raw.json
+      DEPENDENCY_AUDIT_REPORT_PATH: dependency-review-report.json
+      DEPENDENCY_AUDIT_MARKDOWN_PATH: dependency-review-report.md
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Dependency Graphの利用可否を確認
+        id: dependency_graph
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          if gh api "/repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" >/dev/null 2>&1; then
+            echo "enabled=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >>"${GITHUB_OUTPUT}"
+            {
+              echo "### Dependency Reviewフォールバックを使用"
+              echo
+              echo "Dependency Graphを利用できないため、npm auditによる重大脆弱性チェックへ切り替えます。"
+              echo "Dependency Graph有効化後は公式Dependency Reviewを使用します。"
+            } >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: 新規依存関係の脆弱性を確認
+        if: steps.dependency_graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+      - name: Node.jsをセットアップ
+        if: steps.dependency_graph.outputs.enabled != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: lockfile整合性をinstall scriptなしで確認
+        if: steps.dependency_graph.outputs.enabled != 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: フォールバックで依存関係を監査
+        if: steps.dependency_graph.outputs.enabled != 'true'
+        shell: bash
+        run: |
+          set -u
+
+          set +e
+          npm audit --json \
+            >"${DEPENDENCY_AUDIT_ALL_PATH}" \
+            2>dependency-review-all.stderr.log
+          all_exit=$?
+
+          npm audit --omit=dev --json \
+            >"${DEPENDENCY_AUDIT_PRODUCTION_PATH}" \
+            2>dependency-review-production.stderr.log
+          production_exit=$?
+          set -e
+
+          echo "全依存関係audit終了コード: ${all_exit}"
+          echo "本番依存関係audit終了コード: ${production_exit}"
+
+      - name: 安全な修正候補を表示
+        if: steps.dependency_graph.outputs.enabled != 'true'
+        run: node scripts/dependency-audit-fix-candidates.mjs
+
+      - name: フォールバック監査結果を検証
+        if: steps.dependency_graph.outputs.enabled != 'true'
+        env:
+          DEPENDENCY_LOCKFILE_VALID: "true"
+          DEPENDENCY_AUDIT_FAIL_ON_WARNING: "false"
+        run: node scripts/dependency-audit-report.mjs
+
+      - name: フォールバック結果をサマリーへ追加
+        if: steps.dependency_graph.outputs.enabled != 'true' && hashFiles('dependency-review-report.md') != ''
+        shell: bash
+        run: cat dependency-review-report.md >>"${GITHUB_STEP_SUMMARY}"
