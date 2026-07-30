@@ -3,9 +3,14 @@ import { pathToFileURL } from "node:url";
 
 const MAX_ITEMS = 10000;
 const MAX_REF_LENGTH = 500;
+const MAX_PROPERTY_NAME_LENGTH = 200;
 const PACKAGE_NAME_PATTERN = /^(?:@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
 const VERSION_PATTERN = /^[0-9A-Za-z.+_:-]+$/;
 const PROPERTY_NAME_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+const NPM_PLACEMENT_PROPERTY_NAMES = new Set([
+  "cdx:npm:package:path",
+  "cdx:npm:package:development"
+]);
 
 const safeRef = (value) => {
   if (typeof value !== "string") return null;
@@ -52,6 +57,46 @@ const differingPropertyNames = (left, right) => {
   return [...new Set(names)].sort().slice(0, 20);
 };
 
+const removeNpmPlacementProperties = (component) => {
+  if (component.properties == null) {
+    return { component, removed: 0 };
+  }
+  if (!Array.isArray(component.properties)) {
+    throw new Error(`${safeComponentLabel(component)}のproperties形式が不正です。`);
+  }
+
+  const properties = [];
+  let removed = 0;
+
+  for (const property of component.properties) {
+    if (!property || typeof property !== "object" || Array.isArray(property)) {
+      throw new Error(`${safeComponentLabel(component)}のproperty形式が不正です。`);
+    }
+    const name =
+      typeof property.name === "string"
+        ? property.name.replaceAll("\n", " ").replaceAll("\r", " ").trim()
+        : "";
+    if (!name || name.length > MAX_PROPERTY_NAME_LENGTH) {
+      throw new Error(`${safeComponentLabel(component)}のproperty名が不正です。`);
+    }
+
+    if (NPM_PLACEMENT_PROPERTY_NAMES.has(name)) {
+      removed += 1;
+      continue;
+    }
+    properties.push(property);
+  }
+
+  const sanitized = { ...component };
+  if (properties.length === 0) {
+    delete sanitized.properties;
+  } else {
+    sanitized.properties = properties;
+  }
+
+  return { component: sanitized, removed };
+};
+
 const deduplicateComponents = (components) => {
   if (!Array.isArray(components) || components.length === 0 || components.length > MAX_ITEMS) {
     throw new Error("CycloneDXコンポーネントの件数が不正です。");
@@ -59,11 +104,17 @@ const deduplicateComponents = (components) => {
 
   const unique = new Map();
   let duplicates = 0;
+  let removedPlacementProperties = 0;
 
-  for (const component of components) {
-    if (!component || typeof component !== "object" || Array.isArray(component)) {
+  for (const rawComponent of components) {
+    if (!rawComponent || typeof rawComponent !== "object" || Array.isArray(rawComponent)) {
       throw new Error("CycloneDXコンポーネントの形式が不正です。");
     }
+
+    const sanitized = removeNpmPlacementProperties(rawComponent);
+    const component = sanitized.component;
+    removedPlacementProperties += sanitized.removed;
+
     const ref = safeRef(component["bom-ref"]);
     if (!ref) throw new Error("CycloneDXコンポーネントに有効なbom-refがありません。");
 
@@ -82,7 +133,11 @@ const deduplicateComponents = (components) => {
     duplicates += 1;
   }
 
-  return { values: [...unique.values()], duplicates };
+  return {
+    values: [...unique.values()],
+    duplicates,
+    removedPlacementProperties
+  };
 };
 
 const normalizedDependency = (dependency) => {
@@ -151,7 +206,8 @@ export const normalizeNpmCycloneDx = (input) => {
     },
     stats: {
       removedDuplicateComponents: components.duplicates,
-      removedDuplicateDependencies: dependencies.duplicates
+      removedDuplicateDependencies: dependencies.duplicates,
+      removedNpmPlacementProperties: components.removedPlacementProperties
     }
   };
 };
@@ -172,7 +228,7 @@ const runCli = async () => {
   const normalized = normalizeNpmCycloneDx(input);
   await writeFile(outputPath, `${JSON.stringify(normalized.sbom, null, 2)}\n`, { mode: 0o600 });
   console.log(
-    `npm生成SBOMを正規化しました: 重複コンポーネント ${normalized.stats.removedDuplicateComponents}件 / 重複依存参照 ${normalized.stats.removedDuplicateDependencies}件`
+    `npm生成SBOMを正規化しました: 重複コンポーネント ${normalized.stats.removedDuplicateComponents}件 / 重複依存参照 ${normalized.stats.removedDuplicateDependencies}件 / npm配置プロパティ ${normalized.stats.removedNpmPlacementProperties}件`
   );
 };
 
