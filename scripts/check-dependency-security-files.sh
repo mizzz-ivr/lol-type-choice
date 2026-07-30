@@ -104,6 +104,6 @@ require_text "${doc_file}" 'Dependabot'
 require_text "${doc_file}" 'Dependency Review'
 require_text "${doc_file}" 'npm audit'
 require_text "${doc_file}" '自動マージしません'
-require_text "${doc_file}" '自動修正しません'
+require_text "${doc_file}" '`npm audit fix`を自動実行しません'
 
-echo "依存関係セキュリティ設定の静的検証に成功しました。"
+ echo "依存関係セキュリティ設定の静的検証に成功しました。"
