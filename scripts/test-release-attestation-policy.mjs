@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { validateReleaseAttestationPolicy } from "./release-attestation-policy.mjs";
 
+const releaseSubject = "dist/release-${{ inputs.commit_sha }}.tar.gz";
+
 const validWorkflow = `name: 本番手動デプロイ
 on:
   workflow_dispatch:
@@ -19,12 +21,12 @@ jobs:
         id: attest-provenance
         uses: actions/attest@v4
         with:
-          subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz
+          subject-path: ${releaseSubject}
       - name: 本番SBOMをリリースアーカイブへ関連付け
         id: attest-sbom
         uses: actions/attest@v4
         with:
-          subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz
+          subject-path: ${releaseSubject}
           sbom-path: dist/supply-chain/sbom-production.cdx.json
       - name: リリース成果物を保存
         uses: actions/upload-artifact@v4
@@ -48,10 +50,7 @@ expectError(
   /deployジョブへAttestation用権限/
 );
 expectError(
-  validWorkflow.replace(
-    "subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz",
-    "subject-path: dist/**"
-  ),
+  validWorkflow.replace(`subject-path: ${releaseSubject}`, "subject-path: dist/**"),
   /glob・ディレクトリ/
 );
 expectError(
