@@ -47,6 +47,7 @@ docs/
   deployment-sakura-vps.md
   domain-security-monitoring.md
   production-monitoring.md
+  release-artifact-attestation.md
   release-readiness.md
   security-headers.md
   supply-chain-inventory.md
@@ -64,6 +65,7 @@ scripts/
   check-domain-security-files.sh
   check-production-deployment-files.sh
   check-production-monitoring-files.sh
+  check-release-attestation-files.sh
   check-release-readiness-files.sh
   check-sakura-vps-files.sh
   check-supply-chain-files.sh
@@ -74,6 +76,7 @@ scripts/
   merge-domain-security-readiness.mjs
   prepare-standalone.mjs
   production-health-check.mjs
+  release-attestation-policy.mjs
   release-readiness.mjs
   smoke-standalone.mjs
   smoke-test.mjs
@@ -83,6 +86,7 @@ scripts/
   test-merge-domain-security-readiness.mjs
   test-production-health-check.mjs
   test-production-release.sh
+  test-release-attestation-policy.mjs
   test-release-readiness.mjs
   test-supply-chain-report.mjs
 tests/
@@ -126,6 +130,8 @@ npm run dev
 ```bash
 bash scripts/check-sakura-vps-files.sh
 bash scripts/check-production-deployment-files.sh
+bash scripts/check-release-attestation-files.sh
+node scripts/test-release-attestation-policy.mjs
 bash scripts/test-production-release.sh
 bash scripts/check-production-monitoring-files.sh
 node scripts/test-production-health-check.mjs
@@ -153,7 +159,7 @@ npm run supply-chain
 - `Dependency Review`: PRで追加・更新される依存関係のhigh以上の既知脆弱性
 - `Dependency Security Checks`: Dependabot・監査Workflowの安全条件とaudit判定ロジック
 - `Supply Chain Inventory`: 全依存・本番依存のCycloneDX SBOM、ライセンス棚卸し、SHA-256
-- `Deployment Checks`: 本番デプロイWorkflowの安全条件・リリース切替・ヘルスチェック失敗時の自動切り戻し
+- `Deployment Checks`: 本番デプロイWorkflowの安全条件・Artifact Attestation権限・証明対象・リリース切替・自動切り戻し
 - `Monitoring Checks`: 外形監視Workflowの権限・URL制約・HTTP異常・内容異常・タイムアウト
 - `Release Readiness Checks`: リリース判定Workflowの最小権限・GO／NO-GO判定・Secret非出力
 - `Domain Security Checks`: DNS・TLS監視の接続先制約・証明書期限判定・リリース判定連携
@@ -188,6 +194,8 @@ HTTPセキュリティヘッダーの定義、CSPの制約、HSTSの運用は [H
 依存関係の週次更新、PR差分レビュー、定期脆弱性監査は [依存関係セキュリティ運用](docs/dependency-security.md) を参照してください。
 
 全依存・本番依存のSBOM、ライセンス情報、デプロイ成果物との対応付けは [SBOM・依存ライセンス棚卸し運用](docs/supply-chain-inventory.md) を参照してください。
+
+本番リリースアーカイブの生成元とCycloneDX SBOMの関連付けは [本番リリースArtifact Attestation](docs/release-artifact-attestation.md) を参照してください。
 
 事業者に依存しない構成説明は [レンタルサーバー向けデプロイ手順](docs/deployment-rental-server.md) に記載しています。
 
@@ -242,6 +250,8 @@ TLS証明書は残日数15〜30日を警告、14日以下を重大として扱�
 デプロイ先では`releases/<SHA>`へ配置し、`current`シンボリックリンクを切り替えます。PM2再読込または内部ヘルスチェックに失敗した場合、直前リリースへ自動で戻します。
 
 デプロイArtifactには同一コミットから生成した本番SBOM・ライセンスレポート・SHA-256一覧を含めます。これらはVPSへ転送せず、GitHub Actions上のデプロイ証跡として保存します。
+
+リリースアーカイブにはSLSA provenanceとCycloneDX SBOM Attestationを付与します。Attestation生成に失敗した場合はArtifact保存・productionデプロイへ進みません。履歴コミットを再デプロイする場合は、デプロイ対象SHAとWorkflow実行元SHAを区別して確認します。
 
 ### 本番外形監視
 
