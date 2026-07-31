@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Node.jsをセットアップ
         uses: actions/setup-node@v4
@@ -35,6 +37,12 @@ jobs:
 
       - name: 本番Workflowの安全条件を検証
         run: bash scripts/check-production-deployment-files.sh workflow
+
+      - name: 本番リリース生成元証明の設定を検証
+        run: bash scripts/check-release-attestation-files.sh
+
+      - name: 本番リリース生成元証明の正常・異常系を検証
+        run: node scripts/test-release-attestation-policy.mjs
 
       - name: リモートデプロイスクリプトを検証
         run: bash scripts/check-production-deployment-files.sh deploy-script
