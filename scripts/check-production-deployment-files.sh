@@ -5,6 +5,9 @@ workflow_file=".github/workflows/deploy-production.yml"
 deploy_script="scripts/deploy-production-release.sh"
 test_script="scripts/test-production-release.sh"
 pm2_file="deploy/sakura-vps/ecosystem.production.cjs"
+attestation_policy="scripts/release-attestation-policy.mjs"
+attestation_test="scripts/test-release-attestation-policy.mjs"
+attestation_doc="docs/release-artifact-attestation.md"
 mode="${1:-all}"
 
 fail() {
@@ -13,7 +16,14 @@ fail() {
 }
 
 require_files() {
-  for file in "${workflow_file}" "${deploy_script}" "${test_script}" "${pm2_file}"; do
+  for file in \
+    "${workflow_file}" \
+    "${deploy_script}" \
+    "${test_script}" \
+    "${pm2_file}" \
+    "${attestation_policy}" \
+    "${attestation_test}" \
+    "${attestation_doc}"; do
     [[ -f "${file}" ]] || fail "必須ファイルがありません: ${file}"
   done
 }
@@ -38,7 +48,9 @@ require_absent_text() {
 check_syntax() {
   bash -n "${deploy_script}"
   bash -n "${test_script}"
-  echo "シェルスクリプト構文の検証に成功しました。"
+  node --check "${attestation_policy}"
+  node --check "${attestation_test}"
+  echo "デプロイ関連スクリプト構文の検証に成功しました。"
 }
 
 check_workflow() {
@@ -59,7 +71,14 @@ check_workflow() {
   require_text "${workflow_file}" 'supply-chain.sha256'
   require_text "${workflow_file}" 'supply-chain/sbom-production.cdx.json'
   require_text "${workflow_file}" 'supply-chain/dependency-license-report.json'
+  require_text "${workflow_file}" 'id-token: write'
+  require_text "${workflow_file}" 'attestations: write'
+  require_text "${workflow_file}" 'uses: actions/attest@v4'
+  require_text "${workflow_file}" 'subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz'
+  require_text "${workflow_file}" 'sbom-path: dist/supply-chain/sbom-production.cdx.json'
   require_absent_text "${workflow_file}" 'ssh-keyscan'
+  require_absent_text "${workflow_file}" 'packages: write'
+  require_absent_text "${workflow_file}" 'artifact-metadata: write'
 
   if grep -Eq '^[[:space:]]+push:' "${workflow_file}"; then
     fail "本番デプロイWorkflowにpushトリガーを追加しないでください。"
@@ -83,7 +102,13 @@ check_workflow() {
   if grep -Fq 'dist/supply-chain' <<<"${deploy_section}"; then
     fail "SBOM・ライセンスレポートをVPSへ転送しないでください。"
   fi
+  if grep -Fq 'id-token: write' <<<"${deploy_section}" \
+    || grep -Fq 'attestations: write' <<<"${deploy_section}" \
+    || grep -Fq 'actions/attest@' <<<"${deploy_section}"; then
+    fail "deployジョブへAttestation権限・処理を追加しないでください。"
+  fi
 
+  node "${attestation_policy}"
   echo "本番Workflowの安全条件検証に成功しました。"
 }
 
