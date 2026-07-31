@@ -2,6 +2,7 @@ node_modules
 .next
 out
 coverage
+supply-chain
 npm-debug.log*
 .env*
 .DS_Store
