@@ -50,7 +50,7 @@ jobs:
             || { echo "Repository Variable PRODUCTION_SITE_URLを設定してください。" >&2; exit 1; }
 
       - name: デプロイ対象を取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
