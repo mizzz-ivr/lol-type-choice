@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     siteName: "LoL Playstyle Type Finder"
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "LoL Playstyle Type Finder β",
     description: "48問でLoLのプレイ傾向を8軸分析する非公式ファン診断サイト。"
   }
