@@ -24,6 +24,10 @@ jobs:
     name: 品質確認とリリース成果物作成
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     env:
       DEPLOY_SHA: ${{ inputs.commit_sha }}
       DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
@@ -133,6 +137,36 @@ jobs:
               supply-chain/dependency-license-report.md \
               > supply-chain.sha256
           )
+
+      - name: リリースアーカイブの生成元証明を作成
+        id: attest-provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz
+
+      - name: 本番SBOMをリリースアーカイブへ関連付け
+        id: attest-sbom
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release-${{ inputs.commit_sha }}.tar.gz
+          sbom-path: dist/supply-chain/sbom-production.cdx.json
+
+      - name: 生成元証明の識別情報を記録
+        shell: bash
+        env:
+          PROVENANCE_ATTESTATION_URL: ${{ steps.attest-provenance.outputs.attestation-url }}
+          SBOM_ATTESTATION_URL: ${{ steps.attest-sbom.outputs.attestation-url }}
+        run: |
+          {
+            echo "### 本番リリースArtifact Attestation"
+            echo
+            echo "- デプロイ対象コミット: \`${DEPLOY_SHA}\`"
+            echo "- Workflow実行元コミット: \`${GITHUB_SHA}\`"
+            echo "- SLSA provenance: ${PROVENANCE_ATTESTATION_URL}"
+            echo "- CycloneDX SBOM Attestation: ${SBOM_ATTESTATION_URL}"
+            echo
+            echo "> 履歴コミットを指定した場合、デプロイ対象コミットとWorkflow実行元コミットは異なることがあります。"
+          } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: リリース成果物を保存
         uses: actions/upload-artifact@v4

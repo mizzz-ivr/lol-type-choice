@@ -87,7 +87,7 @@ Workflow:
 8. MarkdownをGitHub Actions Summaryへ追加
 9. 生成物を14日間Artifactとして保存
 
-Workflowは`contents: read`のみを使用します。Secret、SSH、SCP、VPS、本番Environmentにはアクセスしません。
+Workflowは`contents: read`のみを使用します。Secret、SSH、SCP、VPS、本番Environment、OIDC、Attestation権限にはアクセスしません。
 
 ## 本番デプロイ成果物
 
@@ -104,6 +104,10 @@ supply-chain.sha256
 ```
 
 SBOMとライセンスレポートはVPSへ転送せず、GitHub Actionsのデプロイ証跡として保存します。ランタイムへ不要なファイルを追加しないためです。
+
+本番手動デプロイでは、リリースアーカイブにSLSA provenanceを付与し、`sbom-production.cdx.json`をCycloneDX SBOM Attestationとして同じアーカイブへ関連付けます。検証方法と履歴コミット指定時の注意点は[本番リリースArtifact Attestation運用](release-artifact-attestation.md)を参照してください。
+
+Pull Requestとmainの`Supply Chain Inventory`は棚卸し専用であり、OIDC・Attestation権限を持たせません。
 
 ## CIを失敗させる条件
 
@@ -150,6 +154,7 @@ SBOMとライセンスレポートはVPSへ転送せず、GitHub Actionsのデ�
 - パッケージ名・バージョン・文字列長を検証する
 - 生成物にSHA-256一覧を付ける
 - 外部サービスへSBOMを自動送信しない
+- Attestation権限を本番手動デプロイのbuildジョブへ限定する
 
 ## 確認方法
 
@@ -171,6 +176,12 @@ sha256sum --check supply-chain/supply-chain.sha256
 sha256sum --check supply-chain.sha256
 ```
 
+生成元とSBOMの関連付けは次の文書に従って`gh attestation verify`で確認します。
+
+```text
+docs/release-artifact-attestation.md
+```
+
 ## レビュー観点
 
 - 正規化された重複件数やnpm配置プロパティ件数が急増していないか
@@ -182,6 +193,7 @@ sha256sum --check supply-chain.sha256
 - 同一パッケージの複数バージョンが必要か
 - PURL欠落がツール制約か、依存情報欠落か
 - package-lock.jsonに想定外のregistryがないか
+- 本番リリースアーカイブのAttestation検証が成功するか
 
 ## 対象外
 
@@ -189,8 +201,8 @@ sha256sum --check supply-chain.sha256
 - 許可・拒否リストによる自動ブロック
 - SBOMの外部公開
 - Dependency-Track等への自動送信
-- SBOM署名
-- GitHub Artifact Attestation
 - コンテナ・OSパッケージのSBOM
+- VPS側での自動Attestation検証
+- 秘密鍵を用いた独自署名
 
-Artifact Attestationは成果物の生成元を署名付きで検証する仕組みですが、追加権限と検証運用が必要です。今回のタスクではSBOM内容と本番成果物への同梱を先に整備し、署名は別タスクとします。
+本番リリースアーカイブのGitHub Artifact Attestationは、[本番リリースArtifact Attestation運用](release-artifact-attestation.md)で管理します。

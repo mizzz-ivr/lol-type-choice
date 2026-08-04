@@ -13,7 +13,9 @@ GitHub Actions build job
   ├─ main所属SHAの検証
   ├─ npm ci / lint / test / build
   ├─ standaloneスモークテスト
-  └─ tar.gz + SHA-256作成
+  ├─ tar.gz + SHA-256 + 本番SBOM作成
+  ├─ SLSA provenance生成
+  └─ CycloneDX SBOM Attestation生成
 
 production Environment承認
 
@@ -28,6 +30,8 @@ GitHub Actions deploy job
 ```
 
 ビルドジョブは本番SSH Secretを参照しません。Secretを利用するのは`production` Environmentを参照するデプロイジョブだけです。
+
+リリースArtifactの生成元証明に必要なOIDC・Attestation権限もビルドジョブだけへ付与し、デプロイジョブには付与しません。
 
 ## 1. 前提
 
@@ -202,7 +206,7 @@ Actions
 - `commit_sha`: GitHub Actions成功済みの40桁SHA
 - `confirmation`: `DEPLOY`
 
-Environment承認を設定している場合、ビルド完了後に承認操作を行います。
+Environment承認を設定している場合、ビルド・Artifact Attestation生成完了後に承認操作を行います。
 
 ## 8. デプロイ後の配置
 
@@ -232,13 +236,44 @@ Workflowは以下を実行します。
 - 対象SHAがmainに含まれること
 - `PRODUCTION_SITE_URL`がHTTPSオリジンであること
 - Lint・Test・Build・standaloneスモークテスト
+- 本番CycloneDX SBOMとライセンスレポート生成
 - リリースアーカイブのSHA-256確認
+- SLSA provenance生成
+- CycloneDX SBOM Attestation生成
 - アーカイブ内の絶対パス・`../`拒否
 - PM2再読込
 - `http://127.0.0.1:3000/api/health`
 - 公開URLの`/api/health`
 
-## 10. 自動切り戻し
+Attestation生成に失敗した場合、Artifact保存と`production`デプロイジョブへ進みません。
+
+## 10. リリースArtifactの生成元証明を確認
+
+本番手動デプロイのActions Summaryには、次を表示します。
+
+- デプロイ対象コミット（`DEPLOY_SHA`）
+- Workflow実行元コミット（`GITHUB_SHA`）
+- SLSA provenanceのURL
+- CycloneDX SBOM AttestationのURL
+
+履歴コミットを指定した場合、`DEPLOY_SHA`と`GITHUB_SHA`は異なることがあります。AttestationはWorkflow実行元を暗号学的に検証し、デプロイ対象SHAはArtifact名・リリース名・依存ライセンスレポートの`commitSha`で突合します。
+
+Artifactをダウンロードした後、次を確認します。
+
+```bash
+sha256sum --check release-<DEPLOY_SHA>.tar.gz.sha256
+sha256sum --check supply-chain.sha256
+
+gh attestation verify release-<DEPLOY_SHA>.tar.gz \
+  --repo mizzz-ivr/lol-type-choice \
+  --signer-workflow mizzz-ivr/lol-type-choice/.github/workflows/deploy-production.yml \
+  --predicate-type https://slsa.dev/provenance/v1 \
+  --deny-self-hosted-runners
+```
+
+CycloneDX SBOM Attestation、Workflow実行元SHAの固定、検証失敗時の対応は[本番リリースArtifact Attestation運用](release-artifact-attestation.md)を参照してください。
+
+## 11. 自動切り戻し
 
 PM2再読込または内部ヘルスチェックに失敗した場合、デプロイスクリプトは以下を行います。
 
@@ -249,18 +284,20 @@ PM2再読込または内部ヘルスチェックに失敗した場合、デプ�
 
 初回デプロイで直前リリースがない場合は、`current`を削除してPM2アプリを停止します。
 
-## 11. 明示的な切り戻し
+## 12. 明示的な切り戻し
 
 過去の正常コミットを再デプロイします。
 
 1. 過去のGitHub Actions成功済みSHAを確認
 2. `本番手動デプロイ`をmainから実行
 3. 過去SHAと`DEPLOY`を入力
-4. 公開後スモークテストを確認
+4. Actions Summaryで`DEPLOY_SHA`と`GITHUB_SHA`を確認
+5. Artifact Attestationとデプロイ対象SHAを確認
+6. 公開後スモークテストを確認
 
 対象SHAがmainの履歴に含まれていれば、リリースディレクトリが削除済みでも再作成できます。
 
-## 12. ログ確認
+## 13. ログ確認
 
 ```bash
 pm2 status
@@ -270,7 +307,7 @@ readlink -f /var/www/lol-type-choice/current
 sudo tail -n 100 /var/log/nginx/lol-type-choice.error.log
 ```
 
-## 13. SSH鍵のローテーション
+## 14. SSH鍵のローテーション
 
 1. 新しい専用鍵を作成
 2. 新公開鍵をVPSへ追加
@@ -283,13 +320,17 @@ sudo tail -n 100 /var/log/nginx/lol-type-choice.error.log
 
 - VPS契約と実機上での初回デプロイ
 - Environment Variable・Secretの実登録
+- 本番手動デプロイを実行したAttestationの実地検証
 - 複数インスタンスへの無停止切替
 - DBマイグレーション
 - 外形監視サービス
 - デプロイ通知
+- VPS側での自動Attestation検証
 
 ## 参考
 
+- [本番リリースArtifact Attestation運用](release-artifact-attestation.md)
 - [GitHub Docs: Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
 - [GitHub Docs: Reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
+- [GitHub Docs: Using artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
 - [GitHub Docs: Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
