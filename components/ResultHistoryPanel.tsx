@@ -11,6 +11,7 @@ import {
   compareAxisScores,
   createResultHistoryRecord,
   parseResultHistory,
+  shouldSavePendingResult,
   type ResultHistoryRecord
 } from "@/lib/resultHistory";
 import type { AxisScore, Role } from "@/lib/types";
@@ -68,7 +69,7 @@ export function ResultHistoryPanel({ encoded, typeId, typeName, axisScore, recom
 
       try {
         const pendingEncoded = window.sessionStorage.getItem(RESULT_HISTORY_PENDING_KEY);
-        shouldSave = pendingEncoded === encoded;
+        shouldSave = shouldSavePendingResult(pendingEncoded, encoded);
         if (pendingEncoded !== null) {
           window.sessionStorage.removeItem(RESULT_HISTORY_PENDING_KEY);
         }
