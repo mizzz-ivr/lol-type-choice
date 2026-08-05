@@ -31,6 +31,9 @@ jobs:
       - name: さくらのVPS設定を検証
         run: bash scripts/check-sakura-vps-files.sh
 
+      - name: SNS共有画像設定を検証
+        run: bash scripts/check-social-preview-files.sh
+
       - name: Node.jsをセットアップ
         uses: actions/setup-node@v4
         with:
