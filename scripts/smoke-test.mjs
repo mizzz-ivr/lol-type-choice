@@ -2,6 +2,7 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 const REQUEST_TIMEOUT_MS = 10_000;
 const SOCIAL_IMAGE_WIDTH = 1200;
 const SOCIAL_IMAGE_HEIGHT = 630;
+const DIAGNOSIS_QUESTION_COUNT = 48;
 
 const normalizeBaseUrl = (value) => {
   const candidate = value?.trim() || DEFAULT_BASE_URL;
@@ -95,6 +96,27 @@ const assertPngDimensions = (buffer, label) => {
   }
 };
 
+const fetchPng = async (targetUrl, label) => {
+  const response = await fetch(targetUrl, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: {
+      Accept: "image/png"
+    }
+  });
+
+  if (response.status !== 200) {
+    throw new Error(`${label}がHTTP ${response.status}を返しました: ${targetUrl}`);
+  }
+  if (response.headers.get("content-type")?.split(";", 1)[0] !== "image/png") {
+    throw new Error(`${label}のContent-Typeがimage/pngではありません。`);
+  }
+
+  assertSecurityHeaders(response, label);
+  assertPngDimensions(Buffer.from(await response.arrayBuffer()), label);
+  return response;
+};
+
 const assertSocialPreview = async (html, baseUrl) => {
   const metadata = readMetaTags(html);
   const requiredMetadata = [
@@ -136,21 +158,103 @@ const assertSocialPreview = async (html, baseUrl) => {
     }
 
     const targetUrl = new URL(`${metadataUrl.pathname}${metadataUrl.search}`, `${baseUrl}/`);
+    await fetchPng(targetUrl, label);
+    console.log(`OK ${label}: ${targetUrl}`);
+  }
+};
+
+const createSmokeResultToken = () => {
+  const body = "2".repeat(DIAGNOSIS_QUESTION_COUNT);
+  const value = body.split("").reduce((sum, char, index) => {
+    return (sum + (char.charCodeAt(0) - 48) * (index + 3)) % 97;
+  }, 0);
+
+  return `v2_${body}_${String(value).padStart(2, "0")}`;
+};
+
+const assertResultCard = async (baseUrl) => {
+  const encoded = createSmokeResultToken();
+  const resultUrl = new URL(`/result?r=${encodeURIComponent(encoded)}`, `${baseUrl}/`);
+  const resultResponse = await fetch(resultUrl, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
+  const html = await resultResponse.text();
+
+  if (resultResponse.status !== 200) {
+    throw new Error(`診断結果ページがHTTP ${resultResponse.status}を返しました: ${resultUrl}`);
+  }
+  if (!html.includes("画像を保存") || !html.includes("URLをコピー")) {
+    throw new Error("診断結果ページに結果カードの保存・コピー導線がありません。");
+  }
+  assertSecurityHeaders(resultResponse, "診断結果ページ");
+
+  const metadata = readMetaTags(html);
+  if (metadata.get("twitter:card") !== "summary_large_image") {
+    throw new Error("診断結果ページのtwitter:cardがsummary_large_imageではありません。");
+  }
+
+  const imageEntries = [
+    ["診断結果OGP画像", metadata.get("og:image")],
+    ["診断結果Xカード画像", metadata.get("twitter:image")]
+  ];
+
+  for (const altName of ["og:image:alt", "twitter:image:alt"]) {
+    const alt = metadata.get(altName) ?? "";
+    if (!alt.includes("診断結果") || !alt.includes("非公式ファン診断カード")) {
+      throw new Error(`${altName}に診断結果カードの説明がありません。`);
+    }
+  }
+
+  for (const [label, imageValue] of imageEntries) {
+    if (!imageValue) {
+      throw new Error(`${label}のメタデータがありません。`);
+    }
+
+    const metadataUrl = new URL(imageValue);
+    if (metadataUrl.pathname !== "/api/result-card" || metadataUrl.searchParams.get("r") !== encoded) {
+      throw new Error(`${label}が表示中の回答トークンを参照していません。`);
+    }
+
+    const targetUrl = new URL(`${metadataUrl.pathname}${metadataUrl.search}`, `${baseUrl}/`);
+    const imageResponse = await fetchPng(targetUrl, label);
+    const contentDisposition = imageResponse.headers.get("content-disposition") ?? "";
+    const cacheControl = imageResponse.headers.get("cache-control") ?? "";
+
+    if (!contentDisposition.startsWith("inline; filename=\"lol-playstyle-")) {
+      throw new Error(`${label}のContent-Dispositionが不正です: ${contentDisposition || "<missing>"}`);
+    }
+    if (!cacheControl.includes("max-age=3600") || !cacheControl.includes("s-maxage=86400")) {
+      throw new Error(`${label}のCache-Controlが期待値を満たしていません: ${cacheControl || "<missing>"}`);
+    }
+
+    console.log(`OK ${label}: ${targetUrl}`);
+  }
+
+  const invalidPaths = [
+    "/api/result-card",
+    "/api/result-card?r=v2_invalid_00",
+    `/api/result-card?r=${encodeURIComponent(encoded)}&r=${encodeURIComponent(encoded)}`,
+    `/api/result-card?r=${encodeURIComponent(encoded)}&theme=dark`
+  ];
+
+  for (const path of invalidPaths) {
+    const targetUrl = new URL(path, `${baseUrl}/`);
     const response = await fetch(targetUrl, {
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
 
-    if (response.status !== 200) {
-      throw new Error(`${label}がHTTP ${response.status}を返しました: ${targetUrl}`);
+    if (response.status !== 400) {
+      throw new Error(`不正な診断結果カードURLがHTTP ${response.status}を返しました: ${targetUrl}`);
     }
-    if (response.headers.get("content-type")?.split(";", 1)[0] !== "image/png") {
-      throw new Error(`${label}のContent-Typeがimage/pngではありません。`);
+    if (response.headers.get("content-type")?.split(";", 1)[0] !== "application/json") {
+      throw new Error(`不正な診断結果カードURLのContent-Typeがapplication/jsonではありません: ${targetUrl}`);
     }
-
-    assertSecurityHeaders(response, label);
-    assertPngDimensions(Buffer.from(await response.arrayBuffer()), label);
-    console.log(`OK ${label}: ${targetUrl}`);
+    if (response.headers.get("cache-control") !== "no-store") {
+      throw new Error(`不正な診断結果カードURLがno-storeではありません: ${targetUrl}`);
+    }
+    assertSecurityHeaders(response, "不正な診断結果カードURL");
   }
 };
 
@@ -183,6 +287,7 @@ const run = async () => {
   }
 
   await assertSocialPreview(topPageHtml, baseUrl);
+  await assertResultCard(baseUrl);
 };
 
 run().catch((error) => {
