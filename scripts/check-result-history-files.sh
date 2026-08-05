@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 history_lib="lib/resultHistory.ts"
+diagnosis_page="app/diagnosis/page.tsx"
 result_panel="components/ResultHistoryPanel.tsx"
 history_component="components/DiagnosisHistory.tsx"
 history_page="app/history/page.tsx"
@@ -31,6 +32,7 @@ require_absent_pattern() {
 
 for file in \
   "${history_lib}" \
+  "${diagnosis_page}" \
   "${result_panel}" \
   "${history_component}" \
   "${history_page}" \
@@ -42,12 +44,17 @@ for file in \
 done
 
 require_text "${history_lib}" 'RESULT_HISTORY_STORAGE_KEY = "lol-type-choice.result-history.v1"'
+require_text "${history_lib}" 'RESULT_HISTORY_PENDING_KEY = "lol-type-choice.result-history-pending.v1"'
 require_text "${history_lib}" 'RESULT_HISTORY_SCHEMA_VERSION = 1'
 require_text "${history_lib}" 'RESULT_HISTORY_LIMIT = 10'
 require_text "${history_lib}" 'decodeAnswers(encoded)'
+require_text "${history_lib}" 'pendingEncoded === encoded && decodeAnswers(encoded) !== null'
 require_text "${history_lib}" 'url.pathname !== "/result"'
 require_text "${history_lib}" 'score >= 0 && score <= 100'
 require_text "${history_lib}" 'validCurrent[0]?.resultPath === record.resultPath'
+require_text "${diagnosis_page}" 'window.sessionStorage.setItem(RESULT_HISTORY_PENDING_KEY, encoded)'
+require_text "${result_panel}" 'window.sessionStorage.getItem(RESULT_HISTORY_PENDING_KEY)'
+require_text "${result_panel}" 'shouldSavePendingResult'
 require_text "${result_panel}" 'window.localStorage.setItem'
 require_text "${result_panel}" 'compareAxisScores'
 require_text "${history_component}" 'window.localStorage.removeItem'
@@ -56,6 +63,7 @@ require_text "${history_page}" 'index: false'
 require_text "${result_page}" '<ResultHistoryPanel'
 require_text "${robots_file}" 'disallow: ["/result", "/history"]'
 require_text "${smoke_file}" 'path: "/history"'
+require_text "${test_file}" '診断完了マーカーと有効な結果トークンが一致する場合だけ保存対象にする'
 require_text "${test_file}" '同じ結果URLの連続保存を抑止する'
 require_text "${test_file}" '11件目追加時は最古の履歴を削除する'
 
