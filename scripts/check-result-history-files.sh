@@ -67,6 +67,8 @@ for file in "${history_lib}" "${result_panel}" "${history_component}"; do
   require_absent_pattern "${file}" 'process\.env'
 done
 
-require_absent_pattern "${history_lib}" 'https?://(?!history\.invalid)'
+for file in "${result_panel}" "${history_component}"; do
+  require_absent_pattern "${file}" 'https?://'
+done
 
 echo "診断履歴機能の静的安全性検証に成功しました。"
