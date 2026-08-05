@@ -2,6 +2,7 @@ import { decodeAnswers } from "@/lib/share";
 import { AXIS_KEYS, type AxisKey, type AxisScore, type Role } from "@/lib/types";
 
 export const RESULT_HISTORY_STORAGE_KEY = "lol-type-choice.result-history.v1";
+export const RESULT_HISTORY_PENDING_KEY = "lol-type-choice.result-history-pending.v1";
 export const RESULT_HISTORY_SCHEMA_VERSION = 1;
 export const RESULT_HISTORY_LIMIT = 10;
 
