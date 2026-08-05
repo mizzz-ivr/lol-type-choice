@@ -9,6 +9,7 @@ import {
   isResultHistoryRecord,
   parseResultHistory,
   removeResultHistoryRecord,
+  shouldSavePendingResult,
   type ResultHistoryRecord
 } from "@/lib/resultHistory";
 import { encodeAnswers } from "@/lib/share";
@@ -57,6 +58,15 @@ describe("診断履歴", () => {
     expect(record.schemaVersion).toBe(RESULT_HISTORY_SCHEMA_VERSION);
     expect(record.resultPath).toMatch(/^\/result\?r=v2_/);
     expect(isResultHistoryRecord(record)).toBe(true);
+  });
+
+  it("診断完了マーカーと有効な結果トークンが一致する場合だけ保存対象にする", () => {
+    const current = encoded(0);
+
+    expect(shouldSavePendingResult(current, current)).toBe(true);
+    expect(shouldSavePendingResult(encoded(1), current)).toBe(false);
+    expect(shouldSavePendingResult(null, current)).toBe(false);
+    expect(shouldSavePendingResult("v2_invalid_00", "v2_invalid_00")).toBe(false);
   });
 
   it("不正な回答トークン・ID・日時を拒否する", () => {
