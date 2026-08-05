@@ -75,6 +75,11 @@ const buildResultPath = (encoded: string): string | null => {
   return `/result?r=${encodeURIComponent(encoded)}`;
 };
 
+export const shouldSavePendingResult = (
+  pendingEncoded: string | null | undefined,
+  encoded: string
+): boolean => pendingEncoded === encoded && decodeAnswers(encoded) !== null;
+
 const isValidResultPath = (value: unknown): value is string => {
   if (typeof value !== "string" || value.length > 256 || !value.startsWith("/result?")) {
     return false;
