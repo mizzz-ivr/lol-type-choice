@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { AxisBars } from "@/components/AxisBars";
-import { ResultActions } from "@/components/ResultActions";
 import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
+import { ResultActions } from "@/components/ResultActions";
+import { ResultHistoryPanel } from "@/components/ResultHistoryPanel";
+import { AXIS_LABELS } from "@/config/axisDisplay";
 import { questions } from "@/data/questions";
 import { parseResultQuery } from "@/lib/resultQuery";
 import { buildDiagnosisResult } from "@/lib/scoring";
@@ -26,17 +28,6 @@ const getResult = async (searchParams: Props["searchParams"]) => {
   } catch {
     return { ok: false as const, reason: "診断ロジックの処理中にエラーが発生しました。" };
   }
-};
-
-const axisLabelMap: Record<(typeof AXIS_KEYS)[number], string> = {
-  initiative: "主導性",
-  riskTolerance: "リスク許容",
-  decisionStyle: "適応判断",
-  winCondition: "自己キャリー",
-  combatRange: "近接志向",
-  processing: "処理負荷耐性",
-  tempo: "終盤志向",
-  responsibility: "全体責任"
 };
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
@@ -105,7 +96,7 @@ export default async function ResultPage({ searchParams }: Props) {
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">
             {sortedAxes.map(({ axis, score }) => (
               <li key={axis}>
-                {axisLabelMap[axis]}: {score}
+                {AXIS_LABELS[axis]}: {score}
               </li>
             ))}
           </ul>
@@ -121,6 +112,14 @@ export default async function ResultPage({ searchParams }: Props) {
         <h2 className="text-xl font-semibold">8軸スコア</h2>
         <AxisBars scores={result.axisScore} />
       </section>
+
+      <ResultHistoryPanel
+        encoded={encoded}
+        typeId={result.type.id}
+        typeName={result.type.name}
+        axisScore={result.axisScore}
+        recommendedRoles={result.recommendedRoles}
+      />
 
       <section className="card space-y-3">
         <h2 className="text-xl font-semibold">おすすめロール（上位2）</h2>
