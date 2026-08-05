@@ -8,6 +8,7 @@ import { QuestionCard } from "@/components/QuestionCard";
 import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
 import { encodeAnswers } from "@/lib/share";
 import { trackEvent } from "@/lib/analytics";
+import { RESULT_HISTORY_PENDING_KEY } from "@/lib/resultHistory";
 import { isOptionValue } from "@/lib/validation";
 
 const STORAGE_KEY = "lol-type-choice.answers.v2";
@@ -108,7 +109,12 @@ export default function DiagnosisPage() {
       }
       hasCompletedRef.current = true;
       trackEvent("diagnosis_completed", { question_count: questions.length, answer_version: "v2" });
-      window.sessionStorage.removeItem(STORAGE_KEY);
+      try {
+        window.sessionStorage.removeItem(STORAGE_KEY);
+        window.sessionStorage.setItem(RESULT_HISTORY_PENDING_KEY, encoded);
+      } catch {
+        // 保存領域が利用できなくても結果表示は継続する。
+      }
       router.push(`/result?r=${encoded}`);
       return;
     }

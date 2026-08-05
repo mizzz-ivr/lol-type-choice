@@ -17,8 +17,9 @@ const normalizeBaseUrl = (value) => {
 const checks = [
   { path: "/", label: "トップページ" },
   { path: "/diagnosis", label: "診断ページ" },
+  { path: "/history", label: "診断履歴ページ", includes: "端末内の履歴" },
   { path: "/api/health", label: "ヘルスチェック", includes: '"status":"ok"' },
-  { path: "/robots.txt", label: "robots.txt", includes: "Disallow: /result" },
+  { path: "/robots.txt", label: "robots.txt", includes: "Disallow: /history" },
   { path: "/sitemap.xml", label: "sitemap.xml", includes: "/diagnosis" }
 ];
 

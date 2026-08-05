@@ -34,6 +34,9 @@ jobs:
       - name: SNS共有画像設定を検証
         run: bash scripts/check-social-preview-files.sh
 
+      - name: 診断履歴機能を検証
+        run: bash scripts/check-result-history-files.sh
+
       - name: Node.jsをセットアップ
         uses: actions/setup-node@v4
         with:

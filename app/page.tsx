@@ -15,9 +15,14 @@ export default function HomePage() {
           <p className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">結果タイプ: 8種類</p>
           <p className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">チャンプ推薦: 20体+</p>
         </div>
-        <Link href="/diagnosis" className="btn-primary w-full sm:w-auto">
-          診断をはじめる
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/diagnosis" className="btn-primary w-full sm:w-auto">
+            診断をはじめる
+          </Link>
+          <Link href="/history" className="btn-secondary w-full sm:w-auto">
+            過去の結果を見る
+          </Link>
+        </div>
       </section>
 
       <section className="card space-y-3 text-sm">
