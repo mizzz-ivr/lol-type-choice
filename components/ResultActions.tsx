@@ -9,6 +9,7 @@ type Props = {
   shareText: string;
   imagePath: string;
   imageFilename: string;
+  comparisonInvitePath?: string | null;
 };
 
 type ActionStatus = {
@@ -57,7 +58,13 @@ const copyText = async (value: string): Promise<void> => {
   }
 };
 
-export function ResultActions({ shareUrl, shareText, imagePath, imageFilename }: Props) {
+export function ResultActions({
+  shareUrl,
+  shareText,
+  imagePath,
+  imageFilename,
+  comparisonInvitePath
+}: Props) {
   const [canNativeShare, setCanNativeShare] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState<ActionStatus>(null);
@@ -180,6 +187,15 @@ export function ResultActions({ shareUrl, shareText, imagePath, imageFilename }:
         >
           Xで共有
         </a>
+        {comparisonInvitePath ? (
+          <Link
+            href={comparisonInvitePath}
+            className="btn-secondary"
+            onClick={() => trackEvent("comparison_invite_created", { source: "result" })}
+          >
+            友だちと比較
+          </Link>
+        ) : null}
         <Link
           href="/diagnosis"
           className="btn-secondary"
