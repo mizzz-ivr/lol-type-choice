@@ -4,7 +4,9 @@ import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
 import { ResultActions } from "@/components/ResultActions";
 import { ResultHistoryPanel } from "@/components/ResultHistoryPanel";
 import { AXIS_LABELS } from "@/config/axisDisplay";
+import { buildResultCardAlt, buildResultCardFilename, RESULT_CARD_SIZE } from "@/config/resultCard";
 import { questions } from "@/data/questions";
+import { buildResultCardPath } from "@/lib/resultCard";
 import { parseResultQuery } from "@/lib/resultQuery";
 import { buildDiagnosisResult } from "@/lib/scoring";
 import { buildSiteUrl } from "@/lib/site";
@@ -35,6 +37,34 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const title = resolved.ok ? `${resolved.result.type.name} | LoL診断 β` : "診断結果 | LoL Playstyle Type Finder β";
   const description = resolved.ok ? `${resolved.result.type.oneLiner} 8軸スコアとおすすめロールを表示。` : "LoL向けプレイスタイル診断結果";
 
+  if (!resolved.ok) {
+    return {
+      title,
+      description,
+      alternates: {
+        canonical: "/result"
+      },
+      robots: {
+        index: false,
+        follow: false
+      },
+      openGraph: {
+        title,
+        description,
+        type: "article"
+      },
+      twitter: {
+        card: "summary",
+        title,
+        description
+      }
+    };
+  }
+
+  const directUrl = buildSiteUrl("/result", { r: resolved.encoded });
+  const imageUrl = buildSiteUrl("/api/result-card", { r: resolved.encoded });
+  const imageAlt = buildResultCardAlt(resolved.result.type.name);
+
   return {
     title,
     description,
@@ -48,12 +78,28 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
     openGraph: {
       title,
       description,
-      type: "article"
+      type: "article",
+      url: directUrl,
+      images: [
+        {
+          url: imageUrl,
+          width: RESULT_CARD_SIZE.width,
+          height: RESULT_CARD_SIZE.height,
+          alt: imageAlt,
+          type: "image/png"
+        }
+      ]
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title,
-      description
+      description,
+      images: [
+        {
+          url: imageUrl,
+          alt: imageAlt
+        }
+      ]
     }
   };
 }
@@ -76,6 +122,7 @@ export default async function ResultPage({ searchParams }: Props) {
 
   const { result, encoded } = resolved;
   const directUrl = buildSiteUrl("/result", { r: encoded });
+  const imagePath = buildResultCardPath(encoded);
   const shareText = `LoL診断βの結果は「${result.type.name}」でした。${result.type.oneLiner}`;
 
   const sortedAxes = [...AXIS_KEYS]
@@ -155,7 +202,14 @@ export default async function ResultPage({ searchParams }: Props) {
         )}
       </section>
 
-      <ResultActions shareUrl={directUrl} shareText={shareText} />
+      {imagePath ? (
+        <ResultActions
+          shareUrl={directUrl}
+          shareText={shareText}
+          imagePath={imagePath}
+          imageFilename={buildResultCardFilename(result.type.id)}
+        />
+      ) : null}
       <OfficialDisclaimerFaq />
     </div>
   );
