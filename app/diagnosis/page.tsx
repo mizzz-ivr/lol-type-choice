@@ -6,6 +6,10 @@ import { questions } from "@/data/questions";
 import { ProgressBar } from "@/components/ProgressBar";
 import { QuestionCard } from "@/components/QuestionCard";
 import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
+import {
+  buildComparisonContinuationResultPath,
+  parseDiagnosisComparisonSearch
+} from "@/lib/comparison";
 import { encodeAnswers } from "@/lib/share";
 import { trackEvent } from "@/lib/analytics";
 import { RESULT_HISTORY_PENDING_KEY } from "@/lib/resultHistory";
@@ -35,6 +39,7 @@ export default function DiagnosisPage() {
   const [answers, setAnswers] = useState<(number | null)[]>(initialAnswers);
   const [index, setIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [comparisonBase, setComparisonBase] = useState<string | null>(null);
   const hasCompletedRef = useRef(false);
   const hasTrackedAbandonmentRef = useRef(false);
   const answeredCountRef = useRef(0);
@@ -45,7 +50,18 @@ export default function DiagnosisPage() {
       answeredCountRef.current = restored.filter((value) => value !== null).length;
       setAnswers(restored);
     }
-    trackEvent("diagnosis_started", { question_count: questions.length, version: "beta" });
+
+    const base = parseDiagnosisComparisonSearch(window.location.search);
+    setComparisonBase(base);
+    if (base) {
+      trackEvent("comparison_diagnosis_started", { source: "invite" });
+    }
+
+    trackEvent("diagnosis_started", {
+      question_count: questions.length,
+      version: "beta",
+      comparison_mode: Boolean(base)
+    });
   }, []);
 
   useEffect(() => {
@@ -108,14 +124,22 @@ export default function DiagnosisPage() {
         return;
       }
       hasCompletedRef.current = true;
-      trackEvent("diagnosis_completed", { question_count: questions.length, answer_version: "v2" });
+      trackEvent("diagnosis_completed", {
+        question_count: questions.length,
+        answer_version: "v2",
+        comparison_mode: Boolean(comparisonBase)
+      });
       try {
         window.sessionStorage.removeItem(STORAGE_KEY);
         window.sessionStorage.setItem(RESULT_HISTORY_PENDING_KEY, encoded);
       } catch {
         // 保存領域が利用できなくても結果表示は継続する。
       }
-      router.push(`/result?r=${encoded}`);
+
+      const continuationPath = comparisonBase
+        ? buildComparisonContinuationResultPath(encoded, comparisonBase)
+        : null;
+      router.push(continuationPath ?? `/result?r=${encoded}`);
       return;
     }
 
@@ -127,6 +151,11 @@ export default function DiagnosisPage() {
       <section className="card space-y-2">
         <h1 className="text-2xl font-bold">プレイスタイル診断（β）</h1>
         <p className="text-sm text-muted">全{questions.length}問 / 目安4〜6分。途中離脱しても同じブラウザなら復元されます。</p>
+        {comparisonBase ? (
+          <p className="rounded-lg border border-cyan-300/40 bg-cyan-400/5 p-3 text-sm text-cyan-100">
+            友だち比較モードです。診断結果を確認したあと、招待元との8軸比較へ進めます。
+          </p>
+        ) : null}
       </section>
 
       <ProgressBar current={index + 1} total={questions.length} />
