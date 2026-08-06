@@ -90,15 +90,20 @@ export const compareDiagnosisResults = (
   }));
   const averageDifference = axes.reduce((sum, item) => sum + item.difference, 0) / AXIS_KEYS.length;
   const similarityScore = Math.max(0, Math.min(100, Math.round(100 - averageDifference)));
-  const withoutIndex = ({ index: _index, ...axis }: (typeof axes)[number]): AxisComparison => axis;
+  const toAxisComparison = (item: (typeof axes)[number]): AxisComparison => ({
+    axis: item.axis,
+    first: item.first,
+    second: item.second,
+    difference: item.difference
+  });
   const closestAxes = [...axes]
     .sort((a, b) => a.difference - b.difference || a.index - b.index)
     .slice(0, 3)
-    .map(withoutIndex);
+    .map(toAxisComparison);
   const differentAxes = [...axes]
     .sort((a, b) => b.difference - a.difference || a.index - b.index)
     .slice(0, 3)
-    .map(withoutIndex);
+    .map(toAxisComparison);
   const sharedRoles = first.result.recommendedRoles.filter((role) =>
     second.result.recommendedRoles.includes(role)
   );
@@ -108,7 +113,7 @@ export const compareDiagnosisResults = (
     second,
     similarityScore,
     similarityLabel: getSimilarityLabel(similarityScore),
-    axes: axes.map(withoutIndex),
+    axes: axes.map(toAxisComparison),
     closestAxes,
     differentAxes,
     sharedRoles
