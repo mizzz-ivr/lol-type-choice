@@ -8,6 +8,8 @@ type Props = {
   params: Promise<{ typeId: string }>;
 };
 
+export const dynamicParams = false;
+
 export const generateStaticParams = () =>
   getAllResultTypeGuides().map(({ resultType }) => ({ typeId: resultType.id }));
 
