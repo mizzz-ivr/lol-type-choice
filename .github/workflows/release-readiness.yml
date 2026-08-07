@@ -53,7 +53,7 @@ jobs:
             || { echo "commit_shaは40桁の小文字16進数で指定してください。" >&2; exit 1; }
 
       - name: 判定対象を取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 0
@@ -121,7 +121,7 @@ jobs:
 
     steps:
       - name: 判定対象を取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit_sha }}
           persist-credentials: false
