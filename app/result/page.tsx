@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
 import { AxisBars } from "@/components/AxisBars";
+import { ComparisonContinuation } from "@/components/ComparisonContinuation";
 import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
 import { ResultActions } from "@/components/ResultActions";
 import { ResultHistoryPanel } from "@/components/ResultHistoryPanel";
 import { AXIS_LABELS } from "@/config/axisDisplay";
 import { buildResultCardAlt, buildResultCardFilename, RESULT_CARD_SIZE } from "@/config/resultCard";
 import { questions } from "@/data/questions";
+import {
+  buildComparisonInvitePath,
+  buildComparisonResultPath,
+  parseResultComparisonContinuation
+} from "@/lib/comparison";
 import { buildResultCardPath } from "@/lib/resultCard";
 import { parseResultQuery } from "@/lib/resultQuery";
 import { buildDiagnosisResult } from "@/lib/scoring";
@@ -26,7 +32,13 @@ const getResult = async (searchParams: Props["searchParams"]) => {
 
   try {
     const result = buildDiagnosisResult(questions, parsed.answerMap);
-    return { ok: true as const, result, encoded: parsed.encoded };
+    const comparisonBase = parseResultComparisonContinuation(params, parsed.encoded);
+    return {
+      ok: true as const,
+      result,
+      encoded: parsed.encoded,
+      comparisonBase
+    };
   } catch {
     return { ok: false as const, reason: "診断ロジックの処理中にエラーが発生しました。" };
   }
@@ -120,9 +132,13 @@ export default async function ResultPage({ searchParams }: Props) {
     );
   }
 
-  const { result, encoded } = resolved;
+  const { result, encoded, comparisonBase } = resolved;
   const directUrl = buildSiteUrl("/result", { r: encoded });
   const imagePath = buildResultCardPath(encoded);
+  const comparisonInvitePath = buildComparisonInvitePath(encoded);
+  const comparisonResultPath = comparisonBase
+    ? buildComparisonResultPath(comparisonBase, encoded)
+    : null;
   const shareText = `LoL診断βの結果は「${result.type.name}」でした。${result.type.oneLiner}`;
 
   const sortedAxes = [...AXIS_KEYS]
@@ -168,6 +184,10 @@ export default async function ResultPage({ searchParams }: Props) {
         recommendedRoles={result.recommendedRoles}
       />
 
+      {comparisonResultPath ? (
+        <ComparisonContinuation comparisonPath={comparisonResultPath} />
+      ) : null}
+
       <section className="card space-y-3">
         <h2 className="text-xl font-semibold">おすすめロール（上位2）</h2>
         <div className="flex gap-2">
@@ -208,6 +228,7 @@ export default async function ResultPage({ searchParams }: Props) {
           shareText={shareText}
           imagePath={imagePath}
           imageFilename={buildResultCardFilename(result.type.id)}
+          comparisonInvitePath={comparisonInvitePath}
         />
       ) : null}
       <OfficialDisclaimerFaq />

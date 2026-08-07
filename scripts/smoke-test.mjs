@@ -20,7 +20,7 @@ const checks = [
   { path: "/diagnosis", label: "診断ページ" },
   { path: "/history", label: "診断履歴ページ", includes: "端末内の履歴" },
   { path: "/api/health", label: "ヘルスチェック", includes: '"status":"ok"' },
-  { path: "/robots.txt", label: "robots.txt", includes: "Disallow: /history" },
+  { path: "/robots.txt", label: "robots.txt", includes: "Disallow: /compare" },
   { path: "/sitemap.xml", label: "sitemap.xml", includes: "/diagnosis" }
 ];
 
@@ -79,6 +79,13 @@ const readMetaTags = (html) => {
   }
 
   return metadata;
+};
+
+const assertNoIndex = (html, label) => {
+  const robots = readMetaTags(html).get("robots") ?? "";
+  if (!robots.includes("noindex") || !robots.includes("nofollow")) {
+    throw new Error(`${label}にnoindex・nofollowがありません: ${robots || "<missing>"}`);
+  }
 };
 
 const assertPngDimensions = (buffer, label) => {
@@ -163,8 +170,12 @@ const assertSocialPreview = async (html, baseUrl) => {
   }
 };
 
-const createSmokeResultToken = () => {
-  const body = "2".repeat(DIAGNOSIS_QUESTION_COUNT);
+const createSmokeResultToken = (digit = "2") => {
+  if (!/^[0-4]$/.test(digit)) {
+    throw new Error("スモーク用回答値は0〜4の1文字で指定してください。");
+  }
+
+  const body = digit.repeat(DIAGNOSIS_QUESTION_COUNT);
   const value = body.split("").reduce((sum, char, index) => {
     return (sum + (char.charCodeAt(0) - 48) * (index + 3)) % 97;
   }, 0);
@@ -184,8 +195,8 @@ const assertResultCard = async (baseUrl) => {
   if (resultResponse.status !== 200) {
     throw new Error(`診断結果ページがHTTP ${resultResponse.status}を返しました: ${resultUrl}`);
   }
-  if (!html.includes("画像を保存") || !html.includes("URLをコピー")) {
-    throw new Error("診断結果ページに結果カードの保存・コピー導線がありません。");
+  if (!html.includes("画像を保存") || !html.includes("URLをコピー") || !html.includes("友だちと比較")) {
+    throw new Error("診断結果ページに結果カード保存・コピー・友だち比較の導線がありません。");
   }
   assertSecurityHeaders(resultResponse, "診断結果ページ");
 
@@ -258,6 +269,86 @@ const assertResultCard = async (baseUrl) => {
   }
 };
 
+const fetchHtmlPage = async (targetUrl, label) => {
+  const response = await fetch(targetUrl, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
+  const html = await response.text();
+
+  if (response.status !== 200) {
+    throw new Error(`${label}がHTTP ${response.status}を返しました: ${targetUrl}`);
+  }
+
+  assertSecurityHeaders(response, label);
+  return html;
+};
+
+const assertFriendComparison = async (baseUrl) => {
+  const first = createSmokeResultToken("1");
+  const second = createSmokeResultToken("3");
+
+  const inviteUrl = new URL(`/compare?base=${encodeURIComponent(first)}`, `${baseUrl}/`);
+  const inviteHtml = await fetchHtmlPage(inviteUrl, "友だち比較招待ページ");
+  if (!inviteHtml.includes("友だち比較の招待") || !inviteHtml.includes("診断して比較する")) {
+    throw new Error("友だち比較招待ページに招待内容と診断導線がありません。");
+  }
+  assertNoIndex(inviteHtml, "友だち比較招待ページ");
+  console.log(`OK 友だち比較招待ページ: ${inviteUrl}`);
+
+  const diagnosisUrl = new URL(`/diagnosis?compare=${encodeURIComponent(first)}`, `${baseUrl}/`);
+  const diagnosisHtml = await fetchHtmlPage(diagnosisUrl, "比較モード診断ページ");
+  if (!diagnosisHtml.includes("プレイスタイル診断")) {
+    throw new Error("比較モード診断ページに診断UIがありません。");
+  }
+  console.log(`OK 比較モード診断ページ: ${diagnosisUrl}`);
+
+  const continuationUrl = new URL(
+    `/result?r=${encodeURIComponent(second)}&compare=${encodeURIComponent(first)}`,
+    `${baseUrl}/`
+  );
+  const continuationHtml = await fetchHtmlPage(continuationUrl, "比較継続結果ページ");
+  if (!continuationHtml.includes("比較結果の準備ができました") || !continuationHtml.includes("友だちとの比較結果を見る")) {
+    throw new Error("比較継続結果ページに比較への導線がありません。");
+  }
+  assertNoIndex(continuationHtml, "比較継続結果ページ");
+  console.log(`OK 比較継続結果ページ: ${continuationUrl}`);
+
+  const comparisonUrl = new URL(
+    `/compare?a=${encodeURIComponent(first)}&b=${encodeURIComponent(second)}`,
+    `${baseUrl}/`
+  );
+  const comparisonHtml = await fetchHtmlPage(comparisonUrl, "友だち比較結果ページ");
+  for (const expected of ["プレイ傾向の近さ", "8軸の比較", "近い軸", "違いが大きい軸", "おすすめロールの共通点"]) {
+    if (!comparisonHtml.includes(expected)) {
+      throw new Error(`友だち比較結果ページに${expected}がありません。`);
+    }
+  }
+  if (comparisonHtml.includes("相性スコア")) {
+    throw new Error("友だち比較結果ページが比較値を相性スコアとして表示しています。");
+  }
+  assertNoIndex(comparisonHtml, "友だち比較結果ページ");
+  console.log(`OK 友だち比較結果ページ: ${comparisonUrl}`);
+
+  const invalidPaths = [
+    "/compare",
+    "/compare?base=v2_invalid_00",
+    `/compare?base=${encodeURIComponent(first)}&base=${encodeURIComponent(first)}`,
+    `/compare?base=${encodeURIComponent(first)}&extra=1`,
+    `/compare?a=${encodeURIComponent(first)}`,
+    `/compare?a=${encodeURIComponent(first)}&b=${encodeURIComponent(second)}&extra=1`
+  ];
+
+  for (const path of invalidPaths) {
+    const targetUrl = new URL(path, `${baseUrl}/`);
+    const html = await fetchHtmlPage(targetUrl, "不正な友だち比較URL");
+    if (!html.includes("診断結果を比較できませんでした")) {
+      throw new Error(`不正な友だち比較URLでエラー表示されません: ${targetUrl}`);
+    }
+    assertNoIndex(html, "不正な友だち比較URL");
+  }
+};
+
 const run = async () => {
   const baseUrl = normalizeBaseUrl(process.env.SMOKE_BASE_URL);
   let topPageHtml = "";
@@ -288,6 +379,7 @@ const run = async () => {
 
   await assertSocialPreview(topPageHtml, baseUrl);
   await assertResultCard(baseUrl);
+  await assertFriendComparison(baseUrl);
 };
 
 run().catch((error) => {

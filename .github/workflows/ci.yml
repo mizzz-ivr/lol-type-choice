@@ -40,6 +40,9 @@ jobs:
       - name: 診断結果カード機能を検証
         run: bash scripts/check-result-card-files.sh
 
+      - name: 友だち比較機能を検証
+        run: bash scripts/check-comparison-files.sh
+
       - name: Node.jsをセットアップ
         uses: actions/setup-node@v4
         with:
