@@ -19,6 +19,9 @@ export default function HomePage() {
           <Link href="/diagnosis" className="btn-primary w-full sm:w-auto">
             診断をはじめる
           </Link>
+          <Link href="/types" className="btn-secondary w-full sm:w-auto">
+            8タイプを見る
+          </Link>
           <Link href="/history" className="btn-secondary w-full sm:w-auto">
             過去の結果を見る
           </Link>
@@ -31,6 +34,12 @@ export default function HomePage() {
           <p className="font-medium text-cyan-100">先導キャリー型</p>
           <p className="text-muted">「自ら開戦を作り、主導権で勝ち切るタイプ」</p>
         </div>
+        <p className="text-muted">
+          診断後は、タイプごとの得意な状況・崩れやすい状況・3段階の練習メニューも確認できます。
+        </p>
+        <Link href="/types/vanguard-carry" className="text-cyan-200 underline underline-offset-4">
+          サンプルの詳しいプレイガイドを見る
+        </Link>
       </section>
 
       <OfficialDisclaimerFaq />
