@@ -70,7 +70,7 @@ for file in "${guide_data}" "${guide_component}" "${types_page}" "${type_detail_
   require_absent_pattern "${file}" 'Data Dragon|ddragon|Riot API'
 done
 
-if [[ $(grep -Fc 'resultTypeId:' "${guide_data}") -ne 8 ]]; then
+if [[ $(grep -Ec '^    resultTypeId:' "${guide_data}") -ne 8 ]]; then
   fail "${guide_data} のガイド件数が8件ではありません。"
 fi
 
