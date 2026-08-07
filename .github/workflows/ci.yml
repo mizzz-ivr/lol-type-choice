@@ -43,6 +43,9 @@ jobs:
       - name: 友だち比較機能を検証
         run: bash scripts/check-comparison-files.sh
 
+      - name: タイプ別プレイガイドを検証
+        run: bash scripts/check-type-guide-files.sh
+
       - name: Node.jsをセットアップ
         uses: actions/setup-node@v4
         with:

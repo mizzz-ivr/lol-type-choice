@@ -6,6 +6,7 @@ const HOSTNAME = "127.0.0.1";
 const PORT = process.env.SMOKE_PORT?.trim() || "3100";
 const BASE_URL = `http://${HOSTNAME}:${PORT}`;
 const STARTUP_TIMEOUT_MS = 30_000;
+const SMOKE_SCRIPTS = ["scripts/smoke-test.mjs", "scripts/smoke-type-guides.mjs"];
 
 const server = spawn(process.execPath, [".next/standalone/server.js"], {
   env: {
@@ -71,10 +72,8 @@ const stopServer = async () => {
   }
 };
 
-try {
-  await waitForServer();
-
-  const smoke = spawn(process.execPath, ["scripts/smoke-test.mjs"], {
+const runSmokeScript = async (scriptPath) => {
+  const smoke = spawn(process.execPath, [scriptPath], {
     env: {
       ...process.env,
       SMOKE_BASE_URL: BASE_URL
@@ -84,7 +83,15 @@ try {
 
   const [exitCode] = await once(smoke, "exit");
   if (exitCode !== 0) {
-    throw new Error(`スモークテストが終了コード${exitCode}で失敗しました。`);
+    throw new Error(`${scriptPath}が終了コード${exitCode}で失敗しました。`);
+  }
+};
+
+try {
+  await waitForServer();
+
+  for (const scriptPath of SMOKE_SCRIPTS) {
+    await runSmokeScript(scriptPath);
   }
 } finally {
   await stopServer();

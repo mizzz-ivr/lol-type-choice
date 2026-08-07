@@ -4,6 +4,7 @@ import { ComparisonContinuation } from "@/components/ComparisonContinuation";
 import { OfficialDisclaimerFaq } from "@/components/OfficialDisclaimerFaq";
 import { ResultActions } from "@/components/ResultActions";
 import { ResultHistoryPanel } from "@/components/ResultHistoryPanel";
+import { ResultPlayGuide } from "@/components/ResultPlayGuide";
 import { AXIS_LABELS } from "@/config/axisDisplay";
 import { buildResultCardAlt, buildResultCardFilename, RESULT_CARD_SIZE } from "@/config/resultCard";
 import { questions } from "@/data/questions";
@@ -175,6 +176,8 @@ export default async function ResultPage({ searchParams }: Props) {
         <h2 className="text-xl font-semibold">8軸スコア</h2>
         <AxisBars scores={result.axisScore} />
       </section>
+
+      <ResultPlayGuide resultTypeId={result.type.id} />
 
       <ResultHistoryPanel
         encoded={encoded}
