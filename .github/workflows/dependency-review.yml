@@ -51,7 +51,7 @@ jobs:
 
       - name: 新規依存関係の脆弱性を確認
         if: steps.dependency_graph.outputs.enabled == 'true'
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
 
